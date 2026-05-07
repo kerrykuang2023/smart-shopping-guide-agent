@@ -1,0 +1,126 @@
+# Example product entry for reference
+# Replace with real product data when ready
+# This file demonstrates the full schema with all optional fields populated
+
+sku: "iPhone-15-Pro-256GB-Black"
+name: "iPhone 15 Pro 256GB 黑色钛金属"
+category: "智能手机"
+brand: "Apple"
+price: 8999
+
+primary_image: "/images/iphone-15-pro-hero.jpg"
+
+gallery:
+  - url: "/images/iphone-15-pro-front.jpg"
+    angle: "front"
+    caption: "正面 - 6.1 英寸超视网膜 XDR 显示屏"
+  - url: "/images/iphone-15-pro-back.jpg"
+    angle: "back"
+    caption: "背面 - 钛金属机身"
+  - url: "/images/iphone-15-pro-side.jpg"
+    angle: "side"
+    caption: "侧面 - 全新 Action Button"
+  - url: "/images/iphone-15-pro-camera.jpg"
+    angle: "detail"
+    caption: "三摄系统特写"
+
+lifestyle_images:
+  - url: "/images/iphone-15-pro-photography.jpg"
+    caption: "专业级摄影"
+  - url: "/images/iphone-15-pro-gaming.jpg"
+    caption: "游戏体验"
+
+selling_points:
+  - text: "搭载 A17 Pro 芯片，业界首款 3nm 工艺手机芯片"
+    image: "/images/feature-a17-chip.jpg"
+  - text: "航空级钛金属机身，比不锈钢轻 19 克"
+    image: "/images/feature-titanium.jpg"
+  - text: "4800 万像素三摄系统，支持空间视频拍摄"
+    image: "/images/feature-camera.jpg"
+  - text: "全新 Action Button，可自定义 9 种快捷功能"
+    image: "/images/feature-action-button.jpg"
+  - text: "USB-C 接口，支持 USB 3.0 高速传输"
+
+specs:
+  - "A17 Pro 芯片，6 核 CPU，6 核 GPU，16 核神经网络引擎"
+  - "6.1 英寸超视网膜 XDR 显示屏，ProMotion 自适应刷新率"
+  - "4800 万像素主摄 + 1200 万像素超广角 + 1200 万像素长焦"
+  - "钛金属机身，IP68 防尘防水"
+  - "USB-C 接口，支持 USB 3.0"
+  - "256GB 存储空间"
+  - "支持 5G 网络"
+
+target_users:
+  - "摄影爱好者：追求高画质和创意"
+  - "商务人士：注重品牌形象和稳定性"
+  - "iOS 生态用户：已有 Mac/iPad/AirPods"
+  - "游戏玩家：需要顶级性能"
+
+use_cases:
+  - "日常通讯与社交"
+  - "专业摄影摄像"
+  - "移动办公"
+  - "游戏娱乐"
+  - "视频创作"
+
+related_products:
+  - sku: "AirPods-Pro-2"
+    name: "AirPods Pro 2"
+    image: "/images/airpods-pro-2.jpg"
+    price: 1899
+    bundle_discount: 200
+    reason: "完美搭配，主动降噪 + 自适应通透模式"
+  
+  - sku: "MagSafe-Charger-2"
+    name: "MagSafe 双项无线充电器"
+    image: "/images/magsafe-charger.jpg"
+    price: 749
+    reason: "原装 MagSafe 充电，最高 15W 快充"
+  
+  - sku: "iPhone-15-Pro-Case"
+    name: "iPhone 15 Pro 精织斜纹保护壳"
+    image: "/images/iphone-case.jpg"
+    price: 399
+    reason: "原装保护壳，与机身完美贴合"
+
+competitors:
+  - sku: "Huawei-Mate-60-Pro"
+    name: "华为 Mate 60 Pro 12+512GB"
+    image: "/images/huawei-mate-60-pro.jpg"
+    price: 6999
+    our_advantages:
+      - "A17 Pro 芯片性能领先约 30%"
+      - "iOS 系统流畅、隐私保护更好"
+      - "专业视频拍摄能力业界顶尖"
+      - "全球 iCloud 服务无缝集成"
+    their_advantages:
+      - "卫星通讯功能（北斗）"
+      - "100W 超级快充"
+      - "更大的电池容量"
+      - "国产化背景，部分客户偏好"
+
+  - sku: "Samsung-Galaxy-S24-Ultra"
+    name: "三星 Galaxy S24 Ultra 256GB"
+    image: "/images/samsung-s24-ultra.jpg"
+    price: 9699
+    our_advantages:
+      - "更小巧便携（6.1 vs 6.8 英寸）"
+      - "iOS 生态优势"
+      - "做工更精细"
+    their_advantages:
+      - "S Pen 手写笔"
+      - "200MP 主摄"
+      - "更大屏幕"
+
+promotions:
+  - title: "以旧换新立减 1500"
+    description: "旧 iPhone 抵扣最高 1500 元"
+    valid_until: "2026-06-30"
+  - title: "搭配 AirPods 立减 200"
+    description: "购买 iPhone 15 Pro + AirPods Pro 2 立减 200"
+    valid_until: "2026-12-31"
+
+metadata:
+  apple_part_number: "MTV13CH/A"
+  release_year: 2023
+  warranty_months: 12

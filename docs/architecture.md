@@ -4,152 +4,272 @@
 
 Smart Shopping Guide Agent is the first scenario application built on top of the **KWeaver Box** edge AI platform. This document describes its end-to-end architecture and integration points.
 
+> **Companion document**: see [`prd.md`](prd.md) for the full Product Requirements Document.
+
+## Key Design Principles
+
+1. **Image-First Experience**: Images are not decoration; they are the primary content
+2. **Dual Frontend**: Server-side Console (admin) + Mobile H5 (end-user)
+3. **QR Code as Entry**: Customers scan to access mobile experience instantly
+4. **Edge-First**: All AI inference happens on-premise, data never leaves
+5. **Demo-Resilient**: Demo mode ensures showcases never fail visibly
+
 ## High-Level Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  Client Layer (Phone / Tablet)                │
+│                    Client Layer                               │
 ├──────────────────────────────────────────────────────────────┤
-│  Phase 1:  H5 (Vue 3)  ──┐                                   │
-│  Phase 2:  Native App ───┤                                   │
-│            (Flutter)     │                                   │
-└──────────────────────────┼───────────────────────────────────┘
-                           │ HTTPS / WSS (LAN)
-                           ▼
+│                                                                │
+│   💻 Demonstrator's Laptop          📱 Audience's Phone        │
+│   (Console - Desktop UI)            (H5 - Mobile UI)           │
+│           │                                  │                 │
+│           │  Browser navigates to            │  Browser scans  │
+│           │  http://server:8080              │  QR Code        │
+└───────────┼──────────────────────────────────┼─────────────────┘
+            │                                  │
+            ▼                                  ▼
 ┌──────────────────────────────────────────────────────────────┐
 │           Edge Compute Box (FusionXpark GB10 / etc.)          │
 ├──────────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  FastAPI Service (Python)                             │   │
-│  │  - /recognize  : Image → SKU + Guide                  │   │
-│  │  - /chat/{sku} : WebSocket Q&A                        │   │
-│  │  - /tts        : Streaming text-to-speech             │   │
-│  │  - /products   : Knowledge base CRUD                  │   │
-│  └────┬───────────────────┬──────────────────────────────┘   │
-│       │                   │                                   │
-│       ▼                   ▼                                   │
+│                                                                │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  FastAPI Service (Python, Single Container)             │  │
+│  │                                                          │  │
+│  │  Routes:                                                 │  │
+│  │  ├── /              → Console SPA (static)              │  │
+│  │  ├── /m             → Mobile H5 SPA (static)            │  │
+│  │  ├── /api/v1/*      → Backend API                        │  │
+│  │  ├── /images/*      → Product images (with resize)       │  │
+│  │  └── /docs          → Swagger UI                         │  │
+│  └────┬───────────────────┬──────────────────┬─────────────┘  │
+│       │                   │                  │                 │
+│       ▼                   ▼                  ▼                 │
 │  ┌─────────┐         ┌─────────┐         ┌──────────────┐    │
 │  │ Qwen2.5 │         │ Qdrant  │         │ Knowledge    │    │
 │  │ -VL-7B  │         │ Vector  │         │ Base (YAML)  │    │
-│  │ (vLLM)  │         │ DB      │         │              │    │
+│  │ (GPU)   │         │ DB      │         │ + Images     │    │
 │  └─────────┘         └─────────┘         └──────────────┘    │
 │       ▲                   ▲                      ▲            │
 │       └───────────────────┴──────────────────────┘            │
-│                  Local-only, no external calls                │
-└──────────────────────────────────────────────────────────────┘
-                           │
-                           │ (Optional, future)
-                           ▼
-┌──────────────────────────────────────────────────────────────┐
-│              KWeaver DIP (Cloud)                              │
-│  - Cross-store insights                                       │
-│  - Model fine-tuning                                          │
-│  - Performance benchmarks                                     │
+│                  All local, no external calls                 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## Key Design Decisions
+## Component Responsibilities
 
-### 1. Edge-First, Cloud-Optional
+### Server-Side Console (`frontend-console/`)
 
-All core functionality runs on the edge box. The cloud (KWeaver DIP) is **only** used for:
-- Cross-store analytics (with explicit consent)
-- Model fine-tuning data collection (anonymized)
-- Performance telemetry
+**For**: Demonstrator, Admin, Decision-maker
 
-**Rationale**: Customer data must not leave the store. Compliance and privacy first.
+**Key Pages**:
+- **Dashboard** - service status, today's stats
+- **QR Code Page** ⭐ - displays large QR for audience to scan (the demo hub)
+- **Products** - manage knowledge base entries with image upload
+- **Models** - tune AI model parameters
+- **Logs** - recent recognition activity
+- **Settings** - port, paths, demo mode toggle
 
-### 2. Stateless Backend
+**Tech**: Vue 3 + Element Plus / Naive UI (desktop-grade)
 
-The FastAPI service is stateless. All persistent data goes to:
-- Qdrant (vector embeddings)
-- Filesystem (knowledge base YAML, model cache)
-- (Future) PostgreSQL for transaction history if needed
+### Mobile H5 (`frontend-h5/`)
 
-**Rationale**: Easy horizontal scaling, easy backup/restore.
+**For**: Customer, Sales staff
 
-### 3. WebSocket for Chat, HTTP for Single-Shot
+**Key Pages**:
+- **Camera Page** - shoot product
+- **Result Page** - rich product card with images, AI guide, related products
+- **Chat Page** - follow-up Q&A
 
-- `/recognize` is a single-shot HTTP POST (image in, guide out).
-- `/chat/{sku}` uses WebSocket for streaming token-by-token LLM responses.
+**Tech**: Vue 3 + Vant (mobile-optimized)
 
-**Rationale**: Better UX for chat (typing indicator, cancellable), simpler for one-shot recognition.
+### Backend Service (`backend/`)
 
-### 4. Knowledge Base as YAML Files
+**Single FastAPI process** that:
+1. Serves both frontend SPAs as static files
+2. Hosts product images with dynamic resizing
+3. Runs Qwen2.5-VL inference on GPU
+4. Manages YAML knowledge base + Qdrant vector index
+5. Generates QR codes dynamically based on detected LAN IP
 
-Product data is stored as human-readable YAML rather than a database.
+## Demo Flow Architecture
 
-**Rationale**:
-- Easy for non-technical staff to edit
-- Version control via git (audit trail)
-- Trivially exportable/importable
-- Will scale to thousands of SKUs without performance issues
-
-For very large catalogs (10k+ SKUs), can migrate to PostgreSQL with the same schema.
-
-## Data Flow: Recognize Request
+The demo experience is designed around **a single QR code scan event**:
 
 ```mermaid
 sequenceDiagram
-    participant U as User (Phone)
-    participant F as Frontend (H5/App)
-    participant B as Backend (FastAPI)
-    participant V as Vision Model (Qwen-VL)
-    participant Q as Qdrant
-    participant K as Knowledge Base
-    participant L as LLM (Guide Generator)
-    participant T as TTS
+    participant Demo as 💼 Demonstrator
+    participant Console as Console (laptop)
+    participant Server as Backend (GB10)
+    participant Phone as 📱 Audience Phone
+    participant H5 as Mobile H5
 
-    U->>F: Tap capture button
-    F->>F: Take photo via camera
-    F->>B: POST /recognize (image)
-    B->>V: Run vision inference
-    V-->>B: SKU candidate + confidence
-    B->>K: Lookup product by SKU
-    K-->>B: Product details
-    B->>Q: Search related products (vector)
-    Q-->>B: Top-K related SKUs
-    B->>L: Generate guide narration
-    L-->>B: Guide text (streaming)
-    B-->>F: JSON response with guide_text + audio_url
-    F->>T: Request audio stream
-    T-->>F: Audio chunks (mp3)
-    F->>U: Display card + play audio
+    Demo->>Console: Navigate to /qr
+    Console->>Server: GET /api/v1/qr/mobile
+    Server->>Server: Detect LAN IP
+    Server-->>Console: PNG QR Code image
+    Console->>Demo: Display large QR
+    
+    Demo->>Phone: Show QR on screen
+    Phone->>Phone: Scan with camera
+    Phone->>H5: Open http://lan-ip:8080/m
+    H5->>Phone: Render mobile UI
+    
+    Phone->>H5: Tap capture button
+    H5->>Phone: Take photo via WebRTC
+    H5->>Server: POST /api/v1/recognize
+    Server->>Server: Vision + LLM inference
+    Server-->>H5: Product card data + image URLs
+    H5->>Server: Lazy-load product images
+    Server-->>H5: Optimized images (WebP)
+    H5->>Phone: Render image-rich product card
+    
+    Phone->>H5: Ask follow-up question
+    H5->>Server: WebSocket /chat/{sku}
+    Server-->>H5: Streaming response
+    H5->>Phone: Live update chat
+    
+    Server->>Console: Push activity log update
+    Console->>Demo: Show recent recognition
 ```
+
+## Data Architecture
+
+### Knowledge Base Storage
+
+```
+backend/
+├── knowledge/
+│   ├── products/                    # YAML files, one per SKU
+│   │   ├── iphone-15-pro.yaml
+│   │   ├── airpods-pro-2.yaml
+│   │   └── ...
+│   ├── images/                      # All product images
+│   │   ├── iphone-15-pro-hero.jpg
+│   │   ├── iphone-15-pro-front.jpg
+│   │   ├── feature-titanium.jpg
+│   │   └── ...
+│   └── schema.yaml                  # Schema definition
+```
+
+### Image Serving
+
+Images are served via FastAPI static file middleware with dynamic resizing:
+
+| URL | Behavior |
+|-----|----------|
+| `/images/iphone-15-pro-hero.jpg` | Original |
+| `/images/iphone-15-pro-hero.jpg?w=200` | Resized to 200px wide |
+| `/images/iphone-15-pro-hero.jpg?w=800&q=75` | 800px wide, 75% quality |
+
+**Auto WebP**: When client `Accept: image/webp`, JPG converts to WebP for ~30% smaller payload.
+
+**Cache headers**: 1-day browser cache + ETag for instant refetch.
+
+### Vector Index (Qdrant)
+
+Used for **related product search** based on semantic similarity:
+
+```
+Product YAML → BGE-M3 embedding → Qdrant vector
+                                       ↓
+Query: "find products similar to iPhone 15 Pro"
+                                       ↓
+Top-K SKUs → fetch full data from YAML cache
+```
+
+Embedded mode (no separate Qdrant container needed for demo).
 
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Vision recognition latency | < 1.5s |
-| Guide generation latency | < 3s (first token) |
-| End-to-end (image → audio start) | < 5s |
-| Concurrent users (GB10) | 50+ |
-| Concurrent users (Jetson AGX) | 5-10 |
-| Offline operation | 100% functional after model + KB loaded |
+| Metric | Target | Rationale |
+|--------|--------|-----------|
+| Vision recognition latency | < 1.5s | User waits with anticipation, not anxiety |
+| Guide first-token latency | < 2s | Streaming starts before patience runs out |
+| End-to-end (capture → see guide) | < 5s | The "magic threshold" for demos |
+| Image lazy load | Instant on scroll | Smooth scrolling experience |
+| Concurrent users (GB10) | 5-10 | Demo + small store reality |
+| Concurrent users (DGX Spark) | 50+ | Larger deployments |
 
 ## Security & Privacy
 
-- **Data residency**: All inference happens on-premise. Images and queries never leave the edge box.
-- **Authentication**: JWT-based for backend admin operations. Anonymous access for end-user features (configurable).
-- **Network**: Backend binds to LAN only by default. External access requires explicit reverse proxy + auth.
-- **Audit**: All recognition events logged locally for compliance (configurable retention).
+### Demo Phase
+
+- **Network**: Backend binds to `0.0.0.0:8080` for LAN access
+- **Auth**: None (demo simplicity)
+- **Data**: All images and queries stay on the GPU box
+
+### Production Phase (Future)
+
+- Console requires JWT login
+- Mobile H5 may have anonymous access (configurable)
+- HTTPS via reverse proxy + Let's Encrypt
+- Audit logging for compliance
+- Rate limiting per IP
+
+## Deployment Architecture
+
+### Demo Phase
+
+```
+Single Docker container on a GPU machine:
+
+  docker run -d --gpus all \
+    -p 8080:8080 \
+    -v $(pwd)/knowledge:/app/knowledge \
+    -v $(pwd)/models:/app/models \
+    smart-guide-agent:0.1.0
+
+That's it. No K8s, no compose, no Nginx.
+```
+
+### Production Phase (Future)
+
+Will be packaged as a `.kwapp` (Helm chart + KWeaver manifest extension) for one-click install via KWeaver AppHub:
+
+```
+KWeaver Box AppHub
+       ↓ (one-click install)
+  Helm Chart
+       ↓ (deploys)
+  K3s Pods (with GPU scheduling)
+       ↓ (managed by)
+  KWeaver Fleet Manager (multi-Box)
+```
 
 ## Integration with KWeaver Box
 
-This application is designed to be packaged as a `.kwapp` for the KWeaver Box AppHub:
+This application is designed from day one to evolve into a `.kwapp`:
 
-- `manifest.kweaver.yaml` - declares scenario (retail/dealership/etc.), required models, ROI metrics
-- Helm Chart - K3s deployment templates
-- Knowledge base seed - sample products
-- Mobile app template - Android Flutter shell
-
-When KWeaver Box AppHub is ready, installation will be a single click from the AppHub UI.
+```yaml
+# Future manifest.kweaver.yaml
+apiVersion: kwapp/v1
+kind: Application
+metadata:
+  id: com.kweaver.smart-shopping-guide
+  name: smart-shopping-guide
+  version: 1.0.0
+spec:
+  industry: ["retail", "automotive", "appliances"]
+  scenarios: ["导购", "产品讲解", "客户咨询"]
+  resources:
+    min: { gpu_memory: 8GB, memory: 8GB }
+    recommended: { gpu_memory: 16GB, memory: 16GB }
+  required_models:
+    - name: qwen2.5-vl-7b-instruct
+      quantization: int4
+  roi:
+    primary_metric:
+      name: 销售转化率
+      target: "+15-30%"
+```
 
 ## Future Enhancements
 
-- **Voice input**: Wake word + ASR for hands-free
-- **AR overlay**: Project info on product via camera (Phase 3+)
-- **Multi-store sync**: Knowledge base sync across stores
-- **A/B testing**: Test different guide scripts for conversion impact
-- **Conversion tracking**: Link recognitions → purchases via QR code
+- **Voice input** (ASR + wake word)
+- **AR overlay** for product info
+- **Multi-store sync** via KWeaver DIP
+- **A/B testing** of guide scripts
+- **Conversion tracking** via QR-code-based purchase links
+- **Multilingual** support
+- **Edge fine-tuning** for store-specific products

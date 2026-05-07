@@ -1,5 +1,6 @@
-# Product Knowledge Base Schema (Draft v0.1)
+# Product Knowledge Base Schema (v0.2 - Image-First)
 # This is the schema definition that all product YAML files should follow.
+# Updated to put images at the center of the experience.
 
 $schema: "http://json-schema.org/draft-07/schema#"
 title: "Product Knowledge Entry"
@@ -9,6 +10,7 @@ required:
   - name
   - category
   - brand
+  - primary_image
   - selling_points
 
 properties:
@@ -33,27 +35,66 @@ properties:
     type: number
     description: "MSRP in CNY"
 
-  images:
+  # ============================================================
+  # IMAGES - Central to the user experience
+  # ============================================================
+
+  primary_image:
+    type: string
+    description: "REQUIRED: Hero image URL, displayed on product cards"
+    example: "/images/iphone-15-pro-hero.jpg"
+
+  gallery:
     type: array
-    description: "Reference images for visual recognition training"
+    description: "Multi-angle product images for detail view carousel"
     items:
       type: object
+      required: [url]
       properties:
         url:
           type: string
         angle:
           type: string
-          enum: [front, back, side, top, in-use]
+          enum: [front, back, side, top, bottom, detail, in-use]
+        caption:
+          type: string
+
+  lifestyle_images:
+    type: array
+    description: "Lifestyle/use-case images (optional)"
+    items:
+      type: object
+      properties:
+        url:
+          type: string
+        caption:
+          type: string
+
+  # ============================================================
+  # SELLING POINTS - Each can have an associated image
+  # ============================================================
+
+  selling_points:
+    type: array
+    description: "Key selling points for AI to narrate (each can have an image)"
+    items:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: "The selling point text (30-50 chars ideal)"
+        image:
+          type: string
+          description: "Optional supporting image for this selling point"
+
+  # ============================================================
+  # SPECS & METADATA
+  # ============================================================
 
   specs:
     type: array
     description: "Technical specifications"
-    items:
-      type: string
-
-  selling_points:
-    type: array
-    description: "Key selling points for AI to narrate"
     items:
       type: string
 
@@ -69,20 +110,53 @@ properties:
     items:
       type: string
 
+  # ============================================================
+  # RELATED PRODUCTS - With images for visual recommendation
+  # ============================================================
+
   related_products:
     type: array
-    description: "Suggested upsell/cross-sell products"
-    items:
-      type: string
-
-  competitors:
-    type: array
-    description: "Competitor comparisons"
+    description: "Suggested upsell/cross-sell products with images"
     items:
       type: object
+      required: [sku, name, image]
       properties:
         sku:
           type: string
+        name:
+          type: string
+        image:
+          type: string
+          description: "REQUIRED: image for the recommendation card"
+        price:
+          type: number
+        bundle_discount:
+          type: number
+          description: "Discount when bought together (CNY)"
+        reason:
+          type: string
+          description: "Why we recommend this together"
+
+  # ============================================================
+  # COMPETITORS - With images for side-by-side comparison
+  # ============================================================
+
+  competitors:
+    type: array
+    description: "Competitor comparisons with images"
+    items:
+      type: object
+      required: [sku, name, image]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          description: "REQUIRED: competitor product image"
+        price:
+          type: number
         our_advantages:
           type: array
           items:
@@ -91,6 +165,10 @@ properties:
           type: array
           items:
             type: string
+
+  # ============================================================
+  # PROMOTIONS
+  # ============================================================
 
   promotions:
     type: array
@@ -102,10 +180,17 @@ properties:
           type: string
         description:
           type: string
+        image:
+          type: string
+          description: "Promotion banner image (optional)"
         valid_until:
           type: string
           format: date
 
+  # ============================================================
+  # METADATA
+  # ============================================================
+
   metadata:
     type: object
-    description: "Additional metadata (custom fields)"
+    description: "Additional metadata (custom fields, integration IDs, etc.)"
