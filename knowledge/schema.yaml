@@ -1,0 +1,111 @@
+# Product Knowledge Base Schema (Draft v0.1)
+# This is the schema definition that all product YAML files should follow.
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "Product Knowledge Entry"
+type: object
+required:
+  - sku
+  - name
+  - category
+  - brand
+  - selling_points
+
+properties:
+  sku:
+    type: string
+    description: "Unique SKU identifier"
+    example: "iPhone-15-Pro-256GB-Black"
+
+  name:
+    type: string
+    description: "Display name for the product"
+
+  category:
+    type: string
+    description: "Product category (smartphone, laptop, car, appliance, etc.)"
+
+  brand:
+    type: string
+    description: "Brand name"
+
+  price:
+    type: number
+    description: "MSRP in CNY"
+
+  images:
+    type: array
+    description: "Reference images for visual recognition training"
+    items:
+      type: object
+      properties:
+        url:
+          type: string
+        angle:
+          type: string
+          enum: [front, back, side, top, in-use]
+
+  specs:
+    type: array
+    description: "Technical specifications"
+    items:
+      type: string
+
+  selling_points:
+    type: array
+    description: "Key selling points for AI to narrate"
+    items:
+      type: string
+
+  target_users:
+    type: array
+    description: "Ideal customer profiles"
+    items:
+      type: string
+
+  use_cases:
+    type: array
+    description: "Common usage scenarios"
+    items:
+      type: string
+
+  related_products:
+    type: array
+    description: "Suggested upsell/cross-sell products"
+    items:
+      type: string
+
+  competitors:
+    type: array
+    description: "Competitor comparisons"
+    items:
+      type: object
+      properties:
+        sku:
+          type: string
+        our_advantages:
+          type: array
+          items:
+            type: string
+        their_advantages:
+          type: array
+          items:
+            type: string
+
+  promotions:
+    type: array
+    description: "Active promotions/discounts"
+    items:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        valid_until:
+          type: string
+          format: date
+
+  metadata:
+    type: object
+    description: "Additional metadata (custom fields)"
