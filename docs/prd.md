@@ -130,7 +130,8 @@ KWeaver Box 边缘盒子部署 **智能导购 Agent**，通过：
 | 模块 | 推迟原因 | 何时实现 |
 |------|---------|---------|
 | Flutter 原生 App | H5 已能验证场景 | Phase 2 |
-| 1Panel 应用包打包 | Demo 直接 docker run | Phase 2 |
+| **.kwapp 打包** | **Demo 直接 Docker 部署到 FusionXpark** | **Phase 5** |
+| **1Panel 应用包打包** | **Demo 直接 docker compose 启动** | **Phase 2-3 评估** |
 | ERP/WMS 集成 | Demo 用静态价格库存 | Phase 3 |
 | 多用户/权限管理 | Demo 单用户 | Phase 3 |
 | ROI 看板 | 需真实数据沉淀 | Phase 3 |
@@ -541,12 +542,16 @@ KWeaver Box 边缘盒子部署 **智能导购 Agent**，通过：
 
 | 项目 | 要求 |
 |------|------|
-| 部署形态 | 单 Docker 容器 |
-| 启动方式 | `docker run` 一行命令 |
-| 配置方式 | 环境变量 + YAML 配置 |
-| 日志输出 | 标准输出（stdout） |
-| 监控接口 | `/health` + `/metrics` |
-| 资源占用 | < 16GB GPU 显存 |
+| **部署目标** | **FusionXpark GB10**（NVIDIA Grace Blackwell, 128GB unified memory） |
+| **部署形态** | **单 Docker 容器（含全部组件）** |
+| **打包方式** | **不做 .kwapp、不做 1Panel app**，直接 docker compose |
+| 启动方式 | `docker compose up -d` 或 `./scripts/start.sh` |
+| 配置方式 | 环境变量 + 挂载卷 |
+| 日志输出 | 标准输出（stdout）+ 文件持久化 |
+| 监控接口 | `/api/v1/health` + `/api/v1/metrics` |
+| 资源占用 | < 16GB GPU 显存（Qwen2.5-VL-7B int4 量化） |
+| 模型缓存 | 挂载 `/app/models` 卷，避免重复下载 |
+| 网络 | 仅监听局域网，演示场景无需 HTTPS |
 
 ### 7.5 可维护性需求
 
@@ -729,29 +734,54 @@ graph TB
 
 ### 9.3 部署拓扑
 
+> **部署目标：FusionXpark GB10**（生产首选）+ 兼容任意 NVIDIA GPU 主机
+
 ```
-┌─────────────────────────────────────────┐
-│  GPU 服务器（一台）                       │
-│  ┌───────────────────────────────────┐  │
-│  │  Docker 容器 (单实例)              │  │
-│  │  ┌────────────────────────┐       │  │
-│  │  │  FastAPI               │       │  │
-│  │  │  ├── /         Console │       │  │
-│  │  │  ├── /m        H5      │       │  │
-│  │  │  ├── /api/v1/* API     │       │  │
-│  │  │  ├── /images/* 图片     │       │  │
-│  │  │  └── /docs     Swagger │       │  │
-│  │  └────────────────────────┘       │  │
-│  │  挂载卷：                           │  │
-│  │  - knowledge/  (产品+图片)         │  │
-│  │  - models/     (AI 模型权重)       │  │
-│  └───────────────────────────────────┘  │
-│  暴露端口：8080                          │
-└─────────────────────────────────────────┘
-              ↑ 局域网 WiFi
-       ┌──────┴──────┐
-   💻 笔记本        📱 手机
+┌──────────────────────────────────────────────────────┐
+│  FusionXpark GB10                                     │
+│  (Grace Blackwell, 128GB unified, 1 PFLOPS)           │
+│                                                        │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │  Docker Engine + NVIDIA Container Toolkit         │ │
+│  │                                                    │ │
+│  │  ┌─────────────────────────────────────────┐    │ │
+│  │  │  smart-guide-agent 容器                  │    │ │
+│  │  │  ├── /          Console SPA              │    │ │
+│  │  │  ├── /m         H5 SPA                   │    │ │
+│  │  │  ├── /api/v1/*  FastAPI 后端              │    │ │
+│  │  │  ├── /images/*  产品图片（动态尺寸）       │    │ │
+│  │  │  └── /docs      Swagger UI               │    │ │
+│  │  │                                          │    │ │
+│  │  │  GPU 加载：Qwen2.5-VL-7B                 │    │ │
+│  │  │  内嵌：Qdrant 向量库                      │    │ │
+│  │  └─────────────────────────────────────────┘    │ │
+│  │                                                    │ │
+│  │  挂载卷（持久化）：                                  │ │
+│  │  - /opt/kweaver/knowledge → /app/knowledge        │ │
+│  │  - /opt/kweaver/models    → /app/models           │ │
+│  │  - /opt/kweaver/logs      → /app/logs             │ │
+│  └─────────────────────────────────────────────────┘ │
+│                                                        │
+│  暴露端口：8080（局域网内）                             │
+└──────────────────────────────────────────────────────┘
+                       ↑ 局域网 WiFi
+            ┌──────────┴──────────┐
+            │                     │
+      💻 演示者笔记本         📱 观众手机
+   http://gb10:8080      扫码 → /m
 ```
+
+**部署命令（单步）**：
+```bash
+docker compose -f deployment/docker/docker-compose.yml up -d
+```
+
+**首次启动时序**：
+1. 拉取镜像（约 1-2 分钟）
+2. 下载 Qwen2.5-VL-7B 模型（约 5-10 分钟，首次唯一）
+3. 模型加载到 GPU（约 30-60 秒）
+4. FastAPI 服务就绪（< 5 秒）
+5. 健康检查通过 → 演示就绪
 
 ### 9.4 数据流
 

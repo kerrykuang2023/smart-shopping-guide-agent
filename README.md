@@ -131,19 +131,33 @@ npm run dev
 # 手机扫码访问 http://<开发机 IP>:5174
 ```
 
-### 一键部署（Docker）
+### 一键部署（Docker，部署目标：FusionXpark GB10）
+
+> **Demo 阶段直接 Docker 部署，不做 .kwapp / 1Panel 包装。** 简单优先，跑通场景为先。
 
 ```bash
-docker build -t smart-guide-agent:0.1.0 .
-docker run --gpus all -p 8080:8080 \
+# 在 FusionXpark GB10（或任意 NVIDIA GPU 主机）上：
+
+# 方式 1：使用 docker compose（推荐）
+docker compose -f deployment/docker/docker-compose.yml up -d
+
+# 方式 2：使用便捷脚本
+./scripts/start.sh
+
+# 方式 3：单条 docker run 命令
+docker run -d --gpus all -p 8080:8080 \
   -v $(pwd)/knowledge:/app/knowledge \
   -v $(pwd)/models:/app/models \
-  smart-guide-agent:0.1.0
+  -v $(pwd)/logs:/app/logs \
+  -e DEMO_MODE=true \
+  ghcr.io/kerrykuang2023/smart-guide-agent:latest
 ```
 
-部署后：
-- 服务端 Console: `http://<server-ip>:8080/`
-- 移动端 H5: `http://<server-ip>:8080/m`
+部署后访问：
+- 服务端 Console: `http://<gb10-ip>:8080/`
+- 移动端 H5: `http://<gb10-ip>:8080/m`（通过 Console QR 页面扫码进入）
+
+详细部署说明见 [`deployment/README.md`](deployment/README.md)
 
 ## 路线图
 
@@ -153,8 +167,8 @@ docker run --gpus all -p 8080:8080 \
   - [ ] 服务端 Console（含 QR Code 页面）
   - [ ] 移动端 H5（拍照 + 结果展示）
   - [ ] 3-5 个 SKU 知识库 + 图片库
-  - [ ] Docker 一键部署
-- [ ] **Phase 2 - 企业版（第 2-3 周）**：Flutter App + 1Panel 应用包
+  - [ ] Docker Compose 一键部署到 FusionXpark GB10
+- [ ] **Phase 2 - 企业版（第 2-3 周）**：Flutter App + 生产级 Docker 部署 + 客户验证
 - [ ] **Phase 3 - 知识库扩展**：100+ SKU、ERP 集成、ROI 看板
 - [ ] **Phase 4 - 高级功能**：语音对话、AR 叠加、多语言
 - [ ] **Phase 5 - KWeaver Box 集成**：打包为 .kwapp 上架 AppHub

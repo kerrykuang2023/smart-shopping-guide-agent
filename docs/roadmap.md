@@ -41,10 +41,13 @@
 - [ ] Write product YAML files following schema
 - [ ] Optimize all images (compress, WebP)
 
-### Deployment
-- [ ] Single Dockerfile with all dependencies
-- [ ] Docker Compose for local dev
-- [ ] README with one-command run
+### Deployment (Direct Docker on FusionXpark GB10)
+- [ ] Multi-stage Dockerfile (frontend build + backend runtime)
+- [ ] docker-compose.yml with GPU support, volumes, healthcheck
+- [ ] `.env.example` with all configurable parameters
+- [ ] Convenience scripts: `start.sh`, `stop.sh`, `logs.sh`, `preload-models.sh`
+- [ ] Deployment guide for FusionXpark GB10
+- [ ] **NOT building .kwapp or 1Panel app for Phase 1** (deferred)
 
 ### Internal Demo
 - [ ] End-to-end test on real phones (iOS + Android)
@@ -55,9 +58,9 @@
 
 ---
 
-## Phase 2: Native App + 1Panel Production (Week 2-3)
+## Phase 2: Native App + Production Polish (Week 2-3)
 
-**Goal**: Production-ready Android app + 1Panel deployment.
+**Goal**: Production-ready Android app + hardened Docker deployment.
 
 - [ ] Flutter project scaffolding
 - [ ] Camera + photo capture (native)
@@ -68,11 +71,13 @@
 - [ ] TTS for voice playback
 - [ ] Backend: Performance optimization (vLLM if needed)
 - [ ] Backend: Multi-image angle support for recognition
-- [ ] 1Panel app package (data.yml + docker-compose.yml + scripts)
-- [ ] Test on FusionXpark GB10
+- [ ] Docker Compose: split services (backend + Qdrant + future Nginx)
+- [ ] Production hardening: HTTPS, JWT auth for Console, rate limiting
+- [ ] Test on FusionXpark GB10 with real customer SKUs
+- [ ] Evaluate (and decide) whether to package as 1Panel app for Phase 3
 - [ ] Internal training video for sales team
 
-**Success Criteria**: Install via 1Panel in <10min, customer-facing demo on Android tablet.
+**Success Criteria**: Customer-facing demo on Android tablet, installed via single docker compose command in <10min.
 
 ---
 
