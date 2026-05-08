@@ -2,15 +2,17 @@
 import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
 
 type RecognizeResult = {
-  sku: string;
+  sku: string | null;
   confidence: number;
+  recognized: boolean;
+  message: string;
   mocked: boolean;
   product: {
     name: string;
     price?: number;
     primary_image: string;
     selling_points: Array<{ text: string }>;
-  };
+  } | null;
   guide_segments: Array<{ title: string; text: string }>;
   related_products: Array<{ name: string; image: string; price?: number }>;
 };
@@ -95,8 +97,22 @@ async function processImageRecognition(blob: Blob, filename: string) {
     
     // 延迟后进入结果页（给用户看扫描完成的感觉）
     setTimeout(() => {
-      pageState.value = 'result';
-      messages.value = []; // 清空之前的对话
+      if (!result.value?.recognized) {
+        // 未识别到商品库中的商品，直接进入通用对话模式
+        pageState.value = 'chat';
+        messages.value = [];
+        // 显示友好提示
+        messages.value.push({
+          type: 'ai',
+          text: result.value?.message || '在您的产品库中还未收录该商品，但我可以基于我的知识尽力帮您解答问题。请告诉我您想了解什么？'
+        });
+        // 语音播报
+        speak(messages.value[0].text);
+      } else {
+        // 识别成功，显示产品详情
+        pageState.value = 'result';
+        messages.value = [];
+      }
     }, 500);
     
   } catch (e) {
@@ -184,7 +200,7 @@ function stopSpeaking() {
 
 // 生成AI解读内容
 async function startAiExplanation() {
-  if (!result.value) return;
+  if (!result.value || !result.value.product) return;
   
   // 切换到对话模式
   pageState.value = 'chat';
@@ -225,6 +241,8 @@ async function startAiExplanation() {
 
 // 生成本地讲解（fallback）
 function generateLocalGuide(result: RecognizeResult): string {
+  if (!result.product) return '抱歉，我暂时无法获取该商品的详细信息。';
+  
   const segments = result.guide_segments;
   let text = `这是${result.product.name}。`;
   segments.forEach(seg => {
@@ -235,7 +253,7 @@ function generateLocalGuide(result: RecognizeResult): string {
 
 // 发送消息
 async function sendMessage() {
-  if (!inputText.value.trim() || !result.value) return;
+  if (!inputText.value.trim()) return;
   
   const userText = inputText.value.trim();
   messages.value.push({ type: 'user', text: userText });
@@ -245,13 +263,16 @@ async function sendMessage() {
   isAiThinking.value = true;
   
   try {
+    // 构建请求体，如果是通用对话模式（未识别商品），则不传 sku
+    const requestBody: any = { message: userText };
+    if (result.value?.recognized && result.value?.sku) {
+      requestBody.sku = result.value.sku;
+    }
+    
     const resp = await fetch('/api/v1/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sku: result.value.sku,
-        message: userText
-      })
+      body: JSON.stringify(requestBody)
     });
     
     if (!resp.ok) throw new Error('请求失败');
@@ -412,20 +433,20 @@ onUnmounted(() => {
     
     <!-- 结果页面 -->
     <div v-if="pageState === 'result'" class="result-page">
-      <div class="result-header">
-        <img :src="result?.product.primary_image" :alt="result?.product.name" class="product-image" />
+      <div v-if="result?.product" class="result-header">
+        <img :src="result.product.primary_image" :alt="result.product.name" class="product-image" />
         <div class="product-info">
-          <h1>{{ result?.product.name }}</h1>
-          <p class="price" v-if="result?.product.price">¥{{ result.product.price }}</p>
+          <h1>{{ result.product.name }}</h1>
+          <p class="price" v-if="result.product.price">¥{{ result.product.price }}</p>
           <div class="badges">
-            <span class="badge">{{ result?.sku }}</span>
-            <span class="badge confidence">置信度 {{ (result?.confidence || 0 * 100).toFixed(0) }}%</span>
+            <span class="badge">{{ result.sku }}</span>
+            <span class="badge confidence">置信度 {{ (result.confidence * 100).toFixed(0) }}%</span>
           </div>
         </div>
       </div>
       
       <!-- 关键交互按钮 -->
-      <div class="guide-action-section">
+      <div v-if="result?.product" class="guide-action-section">
         <p class="guide-hint">已识别产品，需要详细解读吗？</p>
         <button class="guide-btn" @click="startAiExplanation" :disabled="isAiThinking">
           <span class="btn-icon">🎯</span>
@@ -434,8 +455,8 @@ onUnmounted(() => {
       </div>
       
       <!-- 产品卖点预览 -->
-      <div class="guide-preview">
-        <div v-for="(seg, idx) in result?.guide_segments.slice(0, 2)" :key="idx" class="preview-card">
+      <div v-if="result?.product && result.guide_segments.length > 0" class="guide-preview">
+        <div v-for="(seg, idx) in result.guide_segments.slice(0, 2)" :key="idx" class="preview-card">
           <h4>{{ seg.title }}</h4>
           <p>{{ seg.text.substring(0, 50) }}...</p>
         </div>
@@ -448,19 +469,29 @@ onUnmounted(() => {
     
     <!-- 对话页面 -->
     <div v-if="pageState === 'chat'" class="chat-page">
-      <!-- 产品信息条 -->
-      <div class="chat-header">
-        <img :src="result?.product.primary_image" class="chat-product-thumb" />
-        <span class="chat-product-name">{{ result?.product.name }}</span>
+      <!-- 产品信息条（已识别商品时显示） -->
+      <div v-if="result?.product" class="chat-header">
+        <img :src="result.product.primary_image" class="chat-product-thumb" />
+        <span class="chat-product-name">{{ result.product.name }}</span>
         <button class="back-to-result" @click="pageState = 'result'">返回</button>
+      </div>
+      <!-- 通用对话头部（未识别商品时显示） -->
+      <div v-else class="chat-header general">
+        <span class="chat-product-name">💬 通用咨询</span>
+        <button class="back-to-result" @click="restart">重新拍照</button>
       </div>
       
       <!-- 对话区域 -->
       <div class="chat-area">
-        <!-- 初始引导 -->
-        <div v-if="messages.length === 0" class="chat-welcome">
+        <!-- 初始引导（已识别商品） -->
+        <div v-if="messages.length === 0 && result?.recognized" class="chat-welcome">
           <p>👋 我是您的AI导购，请问有什么可以帮您的？</p>
           <p class="hint">例如："这款笔适合学生用吗？"、"和得力的比哪个好？"</p>
+        </div>
+        <!-- 初始引导（未识别商品 - 通用对话模式） -->
+        <div v-if="messages.length === 0 && !result?.recognized" class="chat-welcome">
+          <p>🔍 这个商品不在我的产品库中</p>
+          <p class="hint">但我可以基于通用知识帮您解答问题，请直接输入您想了解的内容</p>
         </div>
         
         <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.type]">
@@ -1018,6 +1049,17 @@ onUnmounted(() => {
   color: white;
   font-size: 13px;
   cursor: pointer;
+}
+
+/* 通用对话头部 */
+.chat-header.general {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(59, 130, 246, 0.2));
+  border-bottom: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.chat-header.general .chat-product-name {
+  color: #a78bfa;
+  font-weight: 600;
 }
 
 /* 对话区域 */

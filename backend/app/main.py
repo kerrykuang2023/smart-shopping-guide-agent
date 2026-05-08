@@ -141,9 +141,22 @@ async def recognize(
     )
     mocked = False
 
+    # 识别失败或置信度太低
     if not result.sku or result.confidence < settings.recognition_confidence_threshold:
+        # 在非 demo 模式下，返回未识别状态，允许通用对话
         if not settings.demo_mode:
-            raise HTTPException(status_code=422, detail="Recognition confidence too low.")
+            return RecognitionResponse(
+                sku=None,
+                confidence=result.confidence,
+                recognized=False,
+                message="在您的产品库中还未收录该商品，但我可以基于我的知识尽力帮您解答问题。请告诉我您想了解什么？",
+                mocked=False,
+                product=None,
+                guide_segments=[],
+                related_products=[],
+                competitors=[],
+            )
+        # demo 模式下随机返回一个产品用于演示
         fallback = knowledge_service.any_product()
         if fallback is None:
             raise HTTPException(status_code=500, detail="Knowledge base is empty.")
@@ -158,6 +171,8 @@ async def recognize(
     response = RecognitionResponse(
         sku=product.sku,
         confidence=result.confidence if not mocked else max(result.confidence, 0.75),
+        recognized=True,
+        message="",
         mocked=mocked,
         product=product,
         guide_segments=guide_segments,
@@ -235,6 +250,26 @@ def update_runtime_settings(payload: RuntimeSettingsUpdate) -> RuntimeSettings:
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
+    runtime_settings = runtime_settings_service.get()
+    
+    # 通用对话模式（未指定 SKU 或商品未识别）
+    if not payload.sku:
+        answer, mocked, source = chat_service.general_answer(
+            message=payload.message,
+            settings=runtime_settings,
+        )
+        activity_log_service.add(
+            ActivityLogEntry(
+                timestamp=datetime.utcnow(),
+                action="chat",
+                sku=None,
+                mocked=mocked,
+                details={"source": source, "message": payload.message, "mode": "general"},
+            )
+        )
+        return ChatResponse(sku=None, answer=answer, mocked=mocked, source=source)
+    
+    # 指定了 SKU，使用产品知识库对话
     product = knowledge_service.get_product(payload.sku)
     if product is None:
         raise HTTPException(status_code=404, detail=f"SKU not found: {payload.sku}")
@@ -242,7 +277,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
     answer, mocked, source = chat_service.answer(
         product=product,
         message=payload.message,
-        settings=runtime_settings_service.get(),
+        settings=runtime_settings,
     )
     activity_log_service.add(
         ActivityLogEntry(

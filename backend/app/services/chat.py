@@ -248,3 +248,125 @@ class ChatService:
         parts.append(random.choice(closings))
         
         return "".join(parts)
+
+    def general_answer(self, message: str, settings: RuntimeSettings) -> tuple[str, bool, str]:
+        """
+        通用对话回复（当商品未在知识库中识别时使用）
+        
+        Returns:
+            (answer_text, is_mocked, source)
+        """
+        # 优先使用远程 LLM 生成回复
+        if settings.llm_base_url.strip():
+            remote = self._answer_with_general_llm(message, settings)
+            if remote:
+                return remote, False, "remote_llm"
+        
+        # Fallback: 使用本地模板生成友好的通用回复
+        return self._generate_general_response(message), True, "general_knowledge"
+    
+    @staticmethod
+    def _build_general_system_prompt() -> str:
+        """
+        构建通用对话的系统提示词
+        当无法识别具体商品时，以友善的通用助手身份回复
+        """
+        return """你是一位友善的购物助手。虽然用户展示的商品不在你的商品库中，但你仍然可以：
+
+【你的态度】
+1. **坦诚告知**：首先礼貌地说明这个商品不在当前库中
+2. **积极帮助**：表示愿意基于通用知识尽力帮助
+3. **专业建议**：根据用户的描述，给出合理的购物建议
+4. **引导探索**：如果有相关商品，可以引导用户了解
+
+【回答结构】
+- 开场：坦诚说明 + 表达帮助意愿
+- 主体：基于通用购物知识给出建议
+- 收尾：邀请用户继续提问或查看相关推荐
+
+【注意事项】
+- 不要编造具体的商品参数或价格
+- 可以分享通用的选购原则
+- 保持热情友善的语气
+- 如果完全不了解，诚实说明并询问更多信息"""
+    
+    def _answer_with_general_llm(self, message: str, settings: RuntimeSettings) -> str | None:
+        """
+        调用远程 LLM 进行通用对话
+        """
+        try:
+            system_prompt = self._build_general_system_prompt()
+            
+            user_prompt = f"用户问题：{message}\n\n请基于通用购物知识，友善地回答用户的问题。如果商品不在库中，请先说明这一点。"
+            
+            payload = {
+                "model": settings.llm_model or "qwen-plus",
+                "temperature": 0.7,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            }
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {settings.llm_api_key}",
+            }
+            
+            req = urllib.request.Request(
+                f"{settings.llm_base_url.rstrip('/')}/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data["choices"][0]["message"]["content"]
+        except Exception:
+            return None
+    
+    @staticmethod
+    def _generate_general_response(message: str) -> str:
+        """
+        生成本地通用回复（当 LLM 不可用时使用）
+        """
+        import random
+        
+        # 常见购物咨询的通用回复模板
+        templates = [
+            "您好！这个商品确实不在我们当前的产品库中，但我可以从通用的角度帮您分析一下。",
+            "抱歉，我暂时还没收录这款商品，不过我很乐意基于购物经验给您一些建议。",
+            "这个商品我暂时不认识，但这不妨碍我帮您！让我想想...",
+        ]
+        
+        # 通用建议
+        advice_list = [
+            "选购这类商品，一般建议先看品牌口碑和用户评价。",
+            "如果预算允许，建议选择知名品牌，质量和售后更有保障。",
+            "这类商品建议关注材质和做工，细节决定使用体验。",
+            "购买前最好对比一下不同渠道的价格和服务。",
+        ]
+        
+        closing_list = [
+            "如果您有这款商品的更多信息，欢迎继续问我！",
+            "如果您对我们库中的其他商品感兴趣，也可以随时问我。",
+            "有什么其他问题，我随时在这里帮您！",
+        ]
+        
+        # 分析用户问题类型，给出相关建议
+        user_lower = message.lower()
+        advice = random.choice(advice_list)
+        
+        if "价" in user_lower or "钱" in user_lower or "贵" in user_lower or "便宜" in user_lower:
+            advice = "价格方面，建议多比较几个渠道，同时注意是否有促销活动。"
+        elif "好" in user_lower or "推荐" in user_lower or "怎样" in user_lower:
+            advice = "选购时建议优先考虑品牌的口碑和产品的实际评价。"
+        elif "用" in user_lower or "功能" in user_lower or "怎么" in user_lower:
+            advice = "具体使用方法建议查看产品说明书，或者询问销售人员。"
+        
+        return (
+            random.choice(templates) + "\n\n" +
+            advice + "\n\n" +
+            random.choice(closing_list)
+        )

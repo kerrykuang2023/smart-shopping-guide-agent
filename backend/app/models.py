@@ -53,13 +53,15 @@ class GuideSegment(BaseModel):
 
 
 class RecognitionResponse(BaseModel):
-    sku: str
-    confidence: float
+    sku: str | None = None
+    confidence: float = 0.0
+    recognized: bool = True  # 是否成功识别商品库中的商品
+    message: str = ""  # 未识别时的提示消息
     mocked: bool = False
-    product: Product
-    guide_segments: list[GuideSegment]
-    related_products: list[ProductRef]
-    competitors: list[ProductRef]
+    product: Product | None = None
+    guide_segments: list[GuideSegment] = Field(default_factory=list)
+    related_products: list[ProductRef] = Field(default_factory=list)
+    competitors: list[ProductRef] = Field(default_factory=list)
 
 
 class ProductListResponse(BaseModel):
@@ -126,15 +128,15 @@ class RuntimeSettingsUpdate(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    sku: str
+    sku: str | None = None  # 可选，不指定时使用通用对话模式
     message: str
 
 
 class ChatResponse(BaseModel):
-    sku: str
+    sku: str | None = None
     answer: str
     mocked: bool = False
-    source: str = "knowledge_base"
+    source: str = "knowledge_base"  # knowledge_base, remote_llm, general_knowledge
 
 
 class TestConnectionRequest(BaseModel):
