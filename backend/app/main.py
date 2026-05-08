@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
 import logging
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -143,52 +142,6 @@ RECOGNITION_AMBIGUOUS_USER_MESSAGE = (
 )
 
 
-def _recognition_api_trace(
-    runtime: RuntimeSettings,
-    image_bytes_len: int,
-    recognizer_reason: str,
-) -> dict[str, Any]:
-    """与 Recognizer 实际行为一致：仅当配置了 vlm_base_url 时才 POST 到 OpenAI 兼容 vLLM 地址。"""
-    st = get_settings()
-    model_name = (runtime.vlm_model or st.vlm_model_name).strip()
-    if runtime.vlm_base_url.strip():
-        url = RecognizerService.openai_chat_completions_url(runtime.vlm_base_url)
-        est_b64_chars = (image_bytes_len * 4 + 2) // 3
-        return {
-            "phase": "openai_compatible_vlm",
-            "http": {"method": "POST", "url": url},
-            "note": "控制台基址填 http://ip:port/ 时会自动拼接为 …/v1/chat/completions（与 vLLM OpenAI 兼容路由一致）。",
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": ("Bearer <configured>" if runtime.vlm_api_key.strip() else "(none)"),
-            },
-            "json_body_shape": {
-                "model": model_name,
-                "temperature": 0,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "(展区签字笔 SKU 识别提示词 + 允许 SKU 列表)"},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/*;base64,<~{est_b64_chars} chars from {image_bytes_len}B upload>"
-                                },
-                            },
-                        ],
-                    }
-                ],
-            },
-            "upload": {"bytes": image_bytes_len},
-            "recognizer_reason": recognizer_reason,
-        }
-    return {
-        "phase": "local_fallback",
-        "http": None,
-        "note": "vlm_base_url 为空，未发起远端 HTTP；当前为本地/mock 路径。",
-        "recognizer_reason": recognizer_reason,
-    }
 
 
 @app.post("/api/v1/recognize", response_model=RecognitionResponse)
@@ -213,7 +166,13 @@ async def recognize(
         vlm_model=runtime_settings.vlm_model or settings.vlm_model_name,
     )
     mocked = False
-    api_trace = _recognition_api_trace(runtime_settings, len(payload), result.reason)
+    api_trace = RecognizerService.build_recognition_api_trace(
+        vlm_base_url=runtime_settings.vlm_base_url,
+        vlm_model=(runtime_settings.vlm_model or settings.vlm_model_name),
+        allowed_skus=list(knowledge_service.all_skus()),
+        image_bytes=payload,
+        recognizer_reason=result.reason,
+    )
 
     ambiguous = not result.sku or result.confidence < settings.recognition_confidence_threshold
 
@@ -346,12 +305,17 @@ def chat(payload: ChatRequest) -> ChatResponse:
     
     # 通用对话模式（未指定 SKU 或商品未识别）
     if not payload.sku:
+        catalog = knowledge_service.list_products()
         answer, mocked, source, new_summary, new_history = chat_service.general_answer(
             message=payload.message,
             settings=runtime_settings,
             history=payload.history,
             summary=payload.summary,
+            catalog_products=catalog,
         )
+        suggested = chat_service.suggested_product_refs(payload.message, catalog)
+        dbg_snap = chat_service.pop_llm_debug()
+        dbg = dbg_snap if payload.debug_trace else None
         activity_log_service.add(
             ActivityLogEntry(
                 timestamp=datetime.utcnow(),
@@ -362,14 +326,16 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
         )
         return ChatResponse(
-            sku=None, 
-            answer=answer, 
-            mocked=mocked, 
+            sku=None,
+            answer=answer,
+            mocked=mocked,
             source=source,
             summary=new_summary,
-            history=new_history
+            history=new_history,
+            suggested_products=suggested,
+            debug_trace=dbg,
         )
-    
+
     # 指定了 SKU，使用产品知识库对话
     product = knowledge_service.get_product(payload.sku)
     if product is None:
@@ -382,6 +348,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
         history=payload.history,
         summary=payload.summary,
     )
+    dbg_snap = chat_service.pop_llm_debug()
+    dbg = dbg_snap if payload.debug_trace else None
     activity_log_service.add(
         ActivityLogEntry(
             timestamp=datetime.utcnow(),
@@ -392,12 +360,14 @@ def chat(payload: ChatRequest) -> ChatResponse:
         )
     )
     return ChatResponse(
-        sku=payload.sku, 
-        answer=answer, 
-        mocked=mocked, 
+        sku=payload.sku,
+        answer=answer,
+        mocked=mocked,
         source=source,
         summary=new_summary,
-        history=new_history
+        history=new_history,
+        suggested_products=[],
+        debug_trace=dbg,
     )
 
 
@@ -687,7 +657,7 @@ async def voice_chat_endpoint(request: VoiceChatRequest):
             error=f"产品不存在: {request.sku}",
         )
 
-    answer_text, mocked, source = chat_service.answer(
+    answer_text, mocked, source, _, _ = chat_service.answer(
         product=product,
         message=recognized_text,
         settings=runtime_settings_service.get(),

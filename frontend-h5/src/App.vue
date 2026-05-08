@@ -35,6 +35,29 @@ const scanProgress = ref(0);
 const scanAngle = ref(0); // 雷达扫描角度
 /** 扫描页底部：预检 + 服务端 api_trace，用于验证 VLM 调用 */
 const scanDebugPrint = ref('');
+/** 进入结果/对话页后仍可展开查看的最后一次识图调试 */
+const lastRecognizeTrace = ref('');
+const scanDebugEl = ref<HTMLElement | null>(null);
+
+const AGENT_DEBUG =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('debug') === '1';
+
+type ProductCard = {
+  sku: string;
+  name: string;
+  image: string;
+  price?: number | null;
+  reason?: string | null;
+};
+
+const suggestedProducts = ref<ProductCard[]>([]);
+const lastChatDebugTrace = ref<Record<string, unknown> | null>(null);
+
+async function scrollScanDebugIntoView() {
+  await nextTick();
+  scanDebugEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
 
 /** 与后端 RecognizerService 一致：基址自动拼 /v1/chat/completions */
 function resolveOpenAIChatCompletionsUrl(base: string): string {
@@ -207,6 +230,7 @@ async function processImageRecognition(blob: Blob, filename: string) {
     preflight = '[预检] 无法读取 /api/v1/settings\n\n';
   }
   scanDebugPrint.value = preflight;
+  void scrollScanDebugIntoView();
 
   try {
     // 发送识别请求
@@ -228,9 +252,11 @@ async function processImageRecognition(blob: Blob, filename: string) {
       ? `———— 服务端回传 api_trace（与本次 POST 一致）————\n${JSON.stringify(trace, null, 2)}`
       : '———— 响应中无 api_trace ————';
     scanDebugPrint.value = preflight + tail;
+    void scrollScanDebugIntoView();
     console.log('[recognize] api_trace', trace);
-    
-    // 延迟后进入结果页（给用户看扫描完成 + 底部调用信息）
+    lastRecognizeTrace.value = scanDebugPrint.value;
+
+    // 延迟后进入结果页（给用户看雷达 + 底部 VLM 调用信息）
     setTimeout(() => {
       if (!result.value?.recognized) {
         // 未识别到商品库中的商品，直接进入通用对话模式
@@ -249,11 +275,12 @@ async function processImageRecognition(blob: Blob, filename: string) {
         pageState.value = 'result';
         messages.value = [];
       }
-    }, 1200);
-    
+    }, 2800);
+
   } catch (e) {
     clearInterval(scanInterval);
     scanDebugPrint.value = preflight + `\n[错误] ${e instanceof Error ? e.message : String(e)}`;
+    void scrollScanDebugIntoView();
     console.error(e);
     alert('识别失败，请重试');
     pageState.value = 'camera';
@@ -299,6 +326,73 @@ async function handleFileSelect(event: Event) {
   input.value = '';
 }
 
+/** 在用户点击的同一次事件循环内调用，尽量避免后续 await 后 audio.play/speech 被静默拦截 */
+let unlockedAudioCtx: AudioContext | null = null;
+function prepareClientAudioOutput(): void {
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (AC) {
+      unlockedAudioCtx = unlockedAudioCtx || new AC();
+      if (unlockedAudioCtx.state === 'suspended') {
+        void unlockedAudioCtx.resume();
+      }
+      const buf = unlockedAudioCtx.createBuffer(1, 1, 22050);
+      const src = unlockedAudioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(unlockedAudioCtx.destination);
+      src.start(0);
+    }
+  } catch {
+    /* 部分环境无权创建 AudioContext */
+  }
+
+  try {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+      const warm = new SpeechSynthesisUtterance('\u00A0');
+      warm.volume = 0;
+      warm.rate = 8;
+      window.speechSynthesis.speak(warm);
+      queueMicrotask(() => {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          /* noop */
+        }
+      });
+    }
+  } catch {
+    /* noop */
+  }
+}
+
+/** 去掉Markdown/编号等，减少对 TTS/朗读的干扰（专业解说常为长段落） */
+function plainTextForSpeech(raw: string): string {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/^\s{0,3}[-*+]\s+/gm, '；')
+    .replace(/^\s{0,3}\d+[.)]\s+/gm, '；')
+    .replace(/[#>*_|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function voicesReadyPromise(): Promise<void> {
+  if (!('speechSynthesis' in window)) return Promise.resolve();
+  if (window.speechSynthesis.getVoices().length > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      window.speechSynthesis.onvoiceschanged = null;
+      resolve();
+    };
+    window.speechSynthesis.onvoiceschanged = done;
+    setTimeout(done, 600);
+  });
+}
+
 // 浏览器 SpeechSynthesis 回退（走本机扬声器）
 function speak(text: string, onEnd?: () => void) {
   if (!('speechSynthesis' in window)) return;
@@ -331,13 +425,31 @@ function speak(text: string, onEnd?: () => void) {
   window.speechSynthesis.speak(utterance);
 }
 
-/** 优先边缘 TTS（HTMLAudio → 手机扬声器），不可用时用语义合成 */
-async function speakSmart(text: string, onEnd?: () => void) {
+type SpeakOptions = {
+  /** 一键专业解说：净化文本 + 优先保证本机扬声器能出声 */
+  speechKind?: 'default' | 'narrate';
+};
+
+/** 优先边缘 TTS（HTMLAudio → 本机扬声器），不可用时用系统语音合成 */
+async function speakSmart(
+  text: string,
+  onEnd?: () => void,
+  opts?: SpeakOptions,
+): Promise<void> {
   stopSpeaking();
-  const t = text.trim();
+  let t = text.trim();
   if (!t) {
     onEnd?.();
     return;
+  }
+
+  if (opts?.speechKind === 'narrate') {
+    prepareClientAudioOutput();
+    t = plainTextForSpeech(t);
+    if (!t) {
+      onEnd?.();
+      return;
+    }
   }
 
   if (serverVoice.value.tts) {
@@ -350,49 +462,73 @@ async function speakSmart(text: string, onEnd?: () => void) {
       if (resp.ok) {
         const data = await resp.json();
         if (data.success && data.audio_base64) {
-          playTtsWavBase64FromServer(t, data.audio_base64 as string, onEnd);
+          await playTtsWavBase64FromServerAsync(t, data.audio_base64 as string, onEnd);
           return;
         }
       }
     } catch {
-      /* 回退浏览器 TTS */
+      /* 回退本机合成 */
     }
   }
 
+  await voicesReadyPromise();
   speak(t, onEnd);
 }
 
-function playTtsWavBase64FromServer(textForFallback: string, base64: string, onEnd?: () => void) {
-  try {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'audio/wav' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    currentTtsAudio = audio;
-    isAiSpeaking.value = true;
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      currentTtsAudio = null;
-      isAiSpeaking.value = false;
-      onEnd?.();
+function playTtsWavBase64FromServerAsync(
+  textForFallback: string,
+  base64: string,
+  onEnd?: () => void,
+): Promise<void> {
+  prepareClientAudioOutput();
+  return new Promise((resolve) => {
+    const fallback = () => {
+      void voicesReadyPromise().then(() => {
+        speak(textForFallback, () => {
+          onEnd?.();
+          resolve();
+        });
+      });
     };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      currentTtsAudio = null;
-      isAiSpeaking.value = false;
-      speak(textForFallback, onEnd);
-    };
-    void audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      currentTtsAudio = null;
-      isAiSpeaking.value = false;
-      speak(textForFallback, onEnd);
-    });
-  } catch {
-    speak(textForFallback, onEnd);
-  }
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.playsInline = true;
+      (audio as unknown as { webkitPlaysinline?: boolean }).webkitPlaysinline = true;
+      audio.preload = 'auto';
+      audio.setAttribute('playsinline', '');
+      currentTtsAudio = audio;
+      isAiSpeaking.value = true;
+      const finish = () => {
+        resolve();
+      };
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        currentTtsAudio = null;
+        isAiSpeaking.value = false;
+        onEnd?.();
+        finish();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        currentTtsAudio = null;
+        isAiSpeaking.value = false;
+        fallback();
+      };
+      void audio.play().catch(() => {
+        URL.revokeObjectURL(url);
+        currentTtsAudio = null;
+        isAiSpeaking.value = false;
+        fallback();
+      });
+    } catch {
+      fallback();
+    }
+  });
 }
 
 // 停止说话（服务端 TTS 音频或浏览器播报）
@@ -410,7 +546,12 @@ function stopSpeaking() {
 
 async function runChatTurn(
   userText: string,
-  options?: { showUserMessage?: boolean; onChatErrorFallback?: () => string }
+  options?: {
+    showUserMessage?: boolean;
+    onChatErrorFallback?: () => string;
+    /** 专业解说：点击后应尽量走扬声器播报（解锁音频 + 宣读净化后的正文） */
+    narrateSpeech?: boolean;
+  },
 ) {
   const showUser = options?.showUserMessage !== false;
   if (showUser) messages.value.push({ type: 'user', text: userText });
@@ -422,6 +563,7 @@ async function runChatTurn(
       message: userText,
       history: contextHistory.value,
       summary: chatSummary.value,
+      debug_trace: AGENT_DEBUG,
     };
     if (result.value?.recognized && result.value?.sku) requestBody.sku = result.value.sku;
 
@@ -432,10 +574,27 @@ async function runChatTurn(
     });
     if (!resp.ok) throw new Error('chat failed');
 
-    const data = await resp.json();
+    const data = (await resp.json()) as {
+      answer: string;
+      history?: Array<{ role: string; content: string }>;
+      summary?: string | null;
+      suggested_products?: ProductCard[];
+      debug_trace?: Record<string, unknown> | null;
+    };
     isAiThinking.value = false;
 
     messages.value.push({ type: 'ai', text: data.answer });
+    suggestedProducts.value = Array.isArray(data.suggested_products)
+      ? data.suggested_products
+      : [];
+    lastChatDebugTrace.value =
+      AGENT_DEBUG && data.debug_trace && typeof data.debug_trace === 'object'
+        ? data.debug_trace
+        : null;
+
+    if (AGENT_DEBUG && data.debug_trace) {
+      console.log('[chat] debug_trace', data.debug_trace);
+    }
 
     if (data.history) {
       contextHistory.value = data.history as typeof contextHistory.value;
@@ -445,12 +604,22 @@ async function runChatTurn(
     }
     if (data.summary !== undefined) chatSummary.value = data.summary;
 
-    void speakSmart(data.answer);
+    if (options?.narrateSpeech) {
+      await speakSmart(data.answer, undefined, { speechKind: 'narrate' });
+    } else {
+      void speakSmart(data.answer);
+    }
   } catch {
     isAiThinking.value = false;
+    suggestedProducts.value = [];
+    lastChatDebugTrace.value = null;
     const msg = options?.onChatErrorFallback?.() ?? '抱歉，我有点走神了，能再说一遍吗？';
     messages.value.push({ type: 'ai', text: msg });
-    void speakSmart(msg);
+    if (options?.narrateSpeech) {
+      await speakSmart(msg, undefined, { speechKind: 'narrate' });
+    } else {
+      void speakSmart(msg);
+    }
   }
 }
 
@@ -466,14 +635,18 @@ function generateLocalGuide(result: RecognizeResult): string {
   return text;
 }
 
-// 一键解读（不展示占位用户气泡，语义与打字提问一致）
+// 一键解读：进入对话后以语音向导播讲为主（在用户点击链路内先做音频解锁）
 async function startAiExplanation() {
   if (!result.value || !result.value.product) return;
 
+  prepareClientAudioOutput();
   pageState.value = 'chat';
+  await nextTick();
+
   await runChatTurn('请为我详细介绍一下这款产品', {
     showUserMessage: false,
     onChatErrorFallback: () => generateLocalGuide(result.value!),
+    narrateSpeech: true,
   });
 }
 
@@ -593,6 +766,27 @@ function stopVoiceInput() {
   isRecording.value = false;
 }
 
+function voicePointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) return;
+  const el = ev.currentTarget as HTMLElement;
+  try {
+    el.setPointerCapture(ev.pointerId);
+  } catch {
+    /* 部分环境下重复 capture 会抛错 */
+  }
+  void startVoiceInput();
+}
+
+function voicePointerUp(ev: PointerEvent) {
+  const el = ev.currentTarget as HTMLElement;
+  try {
+    el.releasePointerCapture(ev.pointerId);
+  } catch {
+    /* noop */
+  }
+  stopVoiceInput();
+}
+
 // 重新开始
 function restart() {
   stopSpeaking();
@@ -602,6 +796,9 @@ function restart() {
   contextHistory.value = [];
   chatSummary.value = null;
   inputText.value = '';
+  suggestedProducts.value = [];
+  lastChatDebugTrace.value = null;
+  lastRecognizeTrace.value = '';
   pageState.value = 'camera';
   scanDebugPrint.value = '';
 }
@@ -703,7 +900,7 @@ onUnmounted(() => {
           <p class="scan-percent">{{ Math.round(scanProgress) }}%</p>
         </div>
       </div>
-      <pre v-if="scanDebugPrint" class="scan-debug-print">{{ scanDebugPrint }}</pre>
+      <pre v-if="scanDebugPrint" ref="scanDebugEl" class="scan-debug-print">{{ scanDebugPrint }}</pre>
     </div>
     
     <!-- 结果页面 -->
@@ -722,8 +919,14 @@ onUnmounted(() => {
       
       <!-- 关键交互按钮 -->
       <div v-if="result?.product" class="guide-action-section">
-        <p class="guide-hint">已识别产品，需要详细解读吗？</p>
-        <button class="guide-btn" @click="startAiExplanation" :disabled="isAiThinking">
+        <p class="guide-hint">已识别产品，点击下方后将进入对话并由本机扬声器自动播报解说（也可点波形条打断）。</p>
+        <button
+          class="guide-btn"
+          type="button"
+          @pointerdown.passive="prepareClientAudioOutput"
+          @click="startAiExplanation"
+          :disabled="isAiThinking"
+        >
           <span class="btn-icon">🎯</span>
           <span class="btn-text">需要帮我解读一下吗？</span>
         </button>
@@ -755,6 +958,15 @@ onUnmounted(() => {
         <span class="chat-product-name">💬 继续为您解答</span>
         <button class="back-to-result" @click="restart">重新拍照</button>
       </div>
+
+      <details v-if="lastRecognizeTrace" class="agent-debug-details">
+        <summary>最近一次识图 / VLM 请求说明</summary>
+        <pre>{{ lastRecognizeTrace }}</pre>
+      </details>
+      <details v-if="AGENT_DEBUG && lastChatDebugTrace" class="agent-debug-details">
+        <summary>最近一次对话 LLM 请求快照（URL ?debug=1）</summary>
+        <pre>{{ JSON.stringify(lastChatDebugTrace, null, 2) }}</pre>
+      </details>
       
       <!-- 对话区域 -->
       <div class="chat-area">
@@ -800,6 +1012,21 @@ onUnmounted(() => {
         </div>
       </div>
       
+      <div v-if="suggestedProducts.length" class="suggested-strip">
+        <p class="suggested-title">展台可参考款</p>
+        <div class="suggested-scroll">
+          <div v-for="p in suggestedProducts" :key="p.sku" class="suggested-card">
+            <img :src="p.image" :alt="p.name" />
+            <div class="suggested-meta">
+              <span class="sn">{{ p.name }}</span>
+              <span class="sku">{{ p.sku }}</span>
+              <span v-if="p.price != null" class="price">¥{{ p.price }}</span>
+              <span v-if="p.reason" class="reason">{{ p.reason }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 输入区 -->
       <div class="chat-input-area">
         <div class="input-wrapper">
@@ -810,8 +1037,10 @@ onUnmounted(() => {
           />
           <button 
             class="voice-btn-small"
-            @mousedown="startVoiceInput"
-            @mouseup="stopVoiceInput"
+            type="button"
+            @pointerdown.prevent="voicePointerDown"
+            @pointerup.prevent="voicePointerUp"
+            @pointercancel.prevent="voicePointerUp"
             :class="{ recording: isRecording }"
           >
             🎤
@@ -824,6 +1053,9 @@ onUnmounted(() => {
             发送
           </button>
         </div>
+        <p class="voice-hint">
+          麦克风：{{ serverVoice.asr ? '服务端 ASR 就绪' : 'ASR 不可用' }} · 请<strong>按住</strong>麦克风说话，松手后识别
+        </p>
         <button class="restart-btn-small" @click="restart">
           📷 识别其他产品
         </button>
@@ -1006,20 +1238,23 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 12px;
-  padding: 12px;
+  padding: 16px 12px;
+  padding-bottom: 24px;
   box-sizing: border-box;
   background: linear-gradient(180deg, #0a0f1a 0%, #0f172a 100%);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .scan-debug-print {
   width: 100%;
   max-width: 520px;
-  max-height: 32vh;
+  max-height: 42vh;
   overflow: auto;
-  margin: 0;
+  margin: 0 auto;
   padding: 10px 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
@@ -1038,6 +1273,8 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 40px;
+  flex-shrink: 0;
+  margin: 0 auto;
 }
 
 .radar-screen {
@@ -1466,6 +1703,110 @@ onUnmounted(() => {
   color: #93c5fd;
 }
 
+/* 最近一次识图 / LLM 调试（可选 URL ?debug=1 带出 LLM payload） */
+.agent-debug-details {
+  margin: 0 12px 8px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.85);
+}
+
+.agent-debug-details summary {
+  cursor: pointer;
+  color: #7dd3fc;
+  margin-bottom: 6px;
+}
+
+.agent-debug-details pre {
+  max-height: 36vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #bae6fd;
+  background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.suggested-strip {
+  padding: 8px 12px 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  background: rgba(15,23,42,0.85);
+}
+
+.suggested-title {
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  margin-bottom: 8px;
+}
+
+.suggested-scroll {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.suggested-card {
+  flex: 0 0 132px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.suggested-card img {
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+  display: block;
+}
+
+.suggested-meta {
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #e5e7eb;
+}
+
+.suggested-meta .sn {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.suggested-meta .sku {
+  font-size: 10px;
+  color: rgba(147,197,253,0.95);
+  word-break: break-all;
+}
+
+.suggested-meta .price {
+  color: #fcd34d;
+  font-weight: 600;
+}
+
+.suggested-meta .reason {
+  color: rgba(255,255,255,0.7);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.voice-hint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  text-align: center;
+  line-height: 1.4;
+}
+
 /* 输入区 */
 .chat-input-area {
   padding: 12px 16px 20px;
@@ -1502,6 +1843,8 @@ onUnmounted(() => {
   color: white;
   font-size: 18px;
   cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .voice-btn-small.recording {

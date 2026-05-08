@@ -69,7 +69,7 @@ class TestChatServiceLocalMode:
 
     def test_local_mode_triggered_when_no_llm_url(self, chat_service, sample_product, empty_settings):
         """测试：当 LLM URL 为空时，使用本地模式"""
-        answer, is_mocked, source = chat_service.answer(
+        answer, is_mocked, source, _, _ = chat_service.answer(
             sample_product, 
             "这支笔怎么样？", 
             empty_settings
@@ -82,7 +82,7 @@ class TestChatServiceLocalMode:
 
     def test_sales_pitch_structure(self, chat_service, sample_product, empty_settings):
         """测试：销售话术结构是否自然"""
-        answer, _, _ = chat_service.answer(
+        answer, _, _, _, _ = chat_service.answer(
             sample_product,
             "这支笔好用吗？",
             empty_settings
@@ -100,7 +100,7 @@ class TestChatServiceLocalMode:
 
     def test_value_emphasis_not_features(self, chat_service, sample_product, empty_settings):
         """测试：强调价值而非功能"""
-        answer, _, _ = chat_service.answer(
+        answer, _, _, _, _ = chat_service.answer(
             sample_product,
             "这支笔有什么特点？",
             empty_settings
@@ -115,7 +115,7 @@ class TestChatServiceLocalMode:
 
     def test_product_name_included(self, chat_service, sample_product, empty_settings):
         """测试：回复中包含产品名"""
-        answer, _, _ = chat_service.answer(
+        answer, _, _, _, _ = chat_service.answer(
             sample_product,
             "推荐一支笔",
             empty_settings
@@ -125,8 +125,8 @@ class TestChatServiceLocalMode:
 
     def test_different_questions_different_responses(self, chat_service, sample_product, empty_settings):
         """测试：不同问题有不同回复"""
-        answer1, _, _ = chat_service.answer(sample_product, "这支笔怎么样？", empty_settings)
-        answer2, _, _ = chat_service.answer(sample_product, "和得力的比哪个好？", empty_settings)
+        answer1, _, _, _, _ = chat_service.answer(sample_product, "这支笔怎么样？", empty_settings)
+        answer2, _, _, _, _ = chat_service.answer(sample_product, "和得力的比哪个好？", empty_settings)
         
         # 两个回复应该不同
         assert answer1 != answer2
@@ -145,7 +145,7 @@ class TestChatServiceLocalMode:
             selling_points=[SellingPoint(text="这是一个测试卖点")]
         )
         
-        answer, _, _ = chat_service.answer(
+        answer, _, _, _, _ = chat_service.answer(
             minimal_product,
             "这是什么？",
             empty_settings
@@ -188,7 +188,7 @@ class TestChatServiceLLMMode:
 
     def test_llm_mode_fallback_when_unreachable(self, chat_service, sample_product, llm_settings):
         """测试：LLM 不可达时回退到本地模式"""
-        answer, is_mocked, source = chat_service.answer(
+        answer, is_mocked, source, _, _ = chat_service.answer(
             sample_product,
             "这支笔怎么样？",
             llm_settings
@@ -223,7 +223,7 @@ class TestSalesPitchTemplates:
         # 多次生成，检查开场白有变化
         openings = set()
         for _ in range(10):
-            answer, _, _ = chat_service.answer(product, "怎么样？", settings)
+            answer, _, _, _, _ = chat_service.answer(product, "怎么样？", settings)
             # 提取前10个字作为开场标识
             opening = answer[:10]
             openings.add(opening)
@@ -251,7 +251,7 @@ class TestSalesPitchTemplates:
             )
             settings = RuntimeSettings(llm_base_url="")
             
-            answer, _, _ = chat_service.answer(product, "这支笔怎么样？", settings)
+            answer, _, _, _, _ = chat_service.answer(product, "这支笔怎么样？", settings)
             
             # 检查是否包含至少一个价值关键词
             has_keyword = any(kw in answer for kw in expected_keywords)
@@ -279,7 +279,7 @@ class TestEdgeCases:
         settings = RuntimeSettings(llm_base_url="")
         
         # 空字符串应该返回有效回复
-        answer, _, _ = chat_service.answer(product, "", settings)
+        answer, _, _, _, _ = chat_service.answer(product, "", settings)
         assert len(answer) > 0
 
     def test_long_message(self, chat_service):
@@ -295,7 +295,7 @@ class TestEdgeCases:
         settings = RuntimeSettings(llm_base_url="")
         
         long_message = "我想买一支笔，用来写日记，要求书写流畅，不晕染，握感舒适，价格不要太贵，请问这款怎么样？"
-        answer, _, _ = chat_service.answer(product, long_message, settings)
+        answer, _, _, _, _ = chat_service.answer(product, long_message, settings)
         assert len(answer) > 0
 
     def test_unicode_message(self, chat_service):
@@ -311,7 +311,7 @@ class TestEdgeCases:
         settings = RuntimeSettings(llm_base_url="")
         
         emoji_message = "这支笔✏️适合学生👨‍🎓用吗？"
-        answer, _, _ = chat_service.answer(product, emoji_message, settings)
+        answer, _, _, _, _ = chat_service.answer(product, emoji_message, settings)
         assert len(answer) > 0
 
     def test_no_selling_points(self, chat_service):
@@ -326,7 +326,7 @@ class TestEdgeCases:
         )
         settings = RuntimeSettings(llm_base_url="")
         
-        answer, _, _ = chat_service.answer(product, "怎么样？", settings)
+        answer, _, _, _, _ = chat_service.answer(product, "怎么样？", settings)
         assert len(answer) > 0
         assert "测试产品" in answer
 

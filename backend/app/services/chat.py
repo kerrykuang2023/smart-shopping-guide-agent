@@ -4,7 +4,7 @@ import json
 import urllib.error
 import urllib.request
 
-from app.models import ChatMessage, Product, RuntimeSettings
+from app.models import ChatMessage, Product, ProductRef, RuntimeSettings
 
 
 class ChatService:
@@ -13,6 +13,73 @@ class ChatService:
     将产品信息转化为有感染力、有情绪价值的销售话术
     支持多轮对话上下文
     """
+
+    def __init__(self) -> None:
+        self._llm_debug_snap: dict | None = None
+
+    def pop_llm_debug(self) -> dict | None:
+        snap = self._llm_debug_snap
+        self._llm_debug_snap = None
+        return snap
+
+    def _stash_llm_debug(self, snapshot: dict | None) -> None:
+        self._llm_debug_snap = snapshot
+
+    @staticmethod
+    def wants_pen_catalog_answer(text: str) -> bool:
+        """用户明确在问展位 SKU / 选型推荐时启用（不宜过宽，以免普通闲聊也贴商品卡）。"""
+        t = text.strip()
+        if not t:
+            return False
+        keys = (
+            "推荐",
+            "帮我选",
+            "选一支",
+            "选一款",
+            "哪款",
+            "哪只",
+            "哪支",
+            "介绍一下",
+            "展台",
+            "陈列",
+            "sku",
+            "型号",
+            "合适的笔",
+            "买什么笔",
+            "有啥笔",
+            "有什么笔",
+        )
+        return any(k.lower() in t.lower() if k.isascii() else k in t for k in keys)
+
+    @staticmethod
+    def suggested_product_refs(message: str, products: list[Product]) -> list[ProductRef]:
+        if not products or not ChatService.wants_pen_catalog_answer(message):
+            return []
+        refs: list[ProductRef] = []
+        for p in products:
+            reason = p.selling_points[0].text if p.selling_points else None
+            refs.append(
+                ProductRef(
+                    sku=p.sku,
+                    name=p.name,
+                    image=p.primary_image,
+                    price=p.price,
+                    reason=reason,
+                )
+            )
+        return refs
+
+    @staticmethod
+    def catalog_block_for_llm(products: list[Product]) -> str:
+        """注入通用 LLM system 的 SKU 素材块（仅此清单内推荐）。"""
+        lines: list[str] = []
+        for p in products:
+            feats = "；".join(sp.text for sp in p.selling_points[:4])
+            price = f"¥{p.price:g}" if p.price is not None else "展台标签为准"
+            lines.append(
+                f"- SKU=`{p.sku}`｜{p.name}｜{p.brand}｜{price}｜主图 `{p.primary_image}`\n  卖点：{feats or '—'}"
+            )
+        return "\n".join(lines)
 
     def answer(
         self, 
@@ -40,7 +107,10 @@ class ChatService:
         
         # 优先使用远程 LLM 生成自然话术
         if settings.llm_base_url.strip():
-            remote = self._answer_with_sales_llm(product, message, settings, new_history, new_summary)
+            self._stash_llm_debug(None)
+            remote = self._answer_with_sales_llm(
+                product, message, settings, new_history, new_summary
+            )
             if remote:
                 new_history.append(ChatMessage(role="user", content=message))
                 new_history.append(ChatMessage(role="assistant", content=remote))
@@ -53,29 +123,43 @@ class ChatService:
         return local_answer, True, "knowledge_base", new_summary, new_history
 
     def general_answer(
-        self, 
-        message: str, 
+        self,
+        message: str,
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None,
-        summary: str | None = None
+        history: list[ChatMessage] | None = None,
+        summary: str | None = None,
+        *,
+        catalog_products: list[Product] | None = None,
     ) -> tuple[str, bool, str, str | None, list[ChatMessage]]:
         """
         生成通用回复（当未识别到特定商品时）
-        
-        Returns:
-            (answer_text, is_mocked, source, new_summary, new_history)
+
+        catalog_products: 展台全量 SKU，供「推荐」类问题与 LLM 素材注入。
         """
         history = history or []
+        catalog_products = catalog_products or []
         new_summary, new_history = self._compress_memory(summary, history, settings)
+        cat_block = (
+            self.catalog_block_for_llm(catalog_products) if catalog_products else ""
+        )
 
         if settings.llm_base_url.strip():
-            remote = self._answer_with_general_llm(message, settings, new_history, new_summary)
+            self._stash_llm_debug(None)
+            remote = self._answer_with_general_llm(
+                message,
+                settings,
+                new_history,
+                new_summary,
+                catalog_block=cat_block,
+            )
             if remote:
                 new_history.append(ChatMessage(role="user", content=message))
                 new_history.append(ChatMessage(role="assistant", content=remote))
                 return remote, False, "remote_llm", new_summary, new_history
-                
-        local_answer = self._generate_general_response(message, new_history)
+
+        local_answer = self._generate_general_response(
+            message, new_history, showcase_products=catalog_products
+        )
         new_history.append(ChatMessage(role="user", content=message))
         new_history.append(ChatMessage(role="assistant", content=local_answer))
         return local_answer, True, "general_knowledge", new_summary, new_history
@@ -225,13 +309,13 @@ class ChatService:
 """
         return context
 
-    @staticmethod
     def _answer_with_sales_llm(
-        product: Product, 
-        message: str, 
+        self,
+        product: Product,
+        message: str,
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None,
-        summary: str | None = None
+        history: list[ChatMessage] | None = None,
+        summary: str | None = None,
     ) -> str | None:
         """
         使用远程 LLM 生成销售话术，支持对话历史上下文
@@ -246,9 +330,16 @@ class ChatService:
         # 构建消息列表，包含历史对话
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{product_context}\n\n【当前对话背景】\n你正在向顾客介绍上述产品。请基于历史对话和当前问题，用金牌导购的方式自然回应，不要重复已经讲过的内容。"},
+            {
+                "role": "user",
+                "content": (
+                    f"{product_context}\n\n【当前对话背景】\n"
+                    "你正在向顾客介绍上述产品。请基于历史对话和当前问题，用金牌导购的方式自然回应，不要重复已经讲过的内容。"
+                ),
+            },
         ]
-        
+
+        history = history or []
         # 添加历史对话
         if history:
             for msg in history[-6:]:  # 只保留最近6轮，避免超出 token 限制
@@ -258,12 +349,17 @@ class ChatService:
                 else:
                     api_role = "user"
                 messages.append({"role": api_role, "content": msg.content})
-        
+
         # 添加当前问题
-        messages.append({
-            "role": "user",
-            "content": f"【顾客的新问题】\n{message}\n\n请自然回应，像跟朋友聊天一样，不要机械重复之前的介绍。",
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"【顾客的新问题】\n{message}\n\n"
+                    "请自然回应，像跟朋友聊天一样，不要机械重复之前的介绍。"
+                ),
+            },
+        )
 
         payload = {
             "model": settings.llm_model,
@@ -271,27 +367,74 @@ class ChatService:
             "max_tokens": 500,
             "messages": messages,
         }
-        
+
         headers = {"Content-Type": "application/json"}
         if settings.llm_api_key:
             headers["Authorization"] = f"Bearer {settings.llm_api_key}"
-        
+
         req = urllib.request.Request(
-            endpoint, 
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), 
-            headers=headers, 
-            method="POST"
+            endpoint,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
         )
 
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
-        except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError, json.JSONDecodeError):
+            content = data["choices"][0]["message"]["content"]
+            self._stash_llm_debug(
+                {"mode": "sku_sales", "endpoint": endpoint, "payload": payload}
+            )
+            return content
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            KeyError,
+            IndexError,
+            json.JSONDecodeError,
+        ):
+            self._stash_llm_debug(None)
             return None
 
     @staticmethod
-    def _generate_general_response(message: str, history: list[ChatMessage] | None = None) -> str:
+    def _template_catalog_recommendation(
+        showcase_products: list[Product],
+        history: list[ChatMessage],
+    ) -> str:
+        """展位全 SKU 可读推荐（模板），含价格、图像路径引用、卖点。"""
+        prior_user_rounds = sum(1 for m in history if m.role == "user")
+        lead = (
+            "可以，展台这几款都是我们常给顾客试的经典签字笔／中性笔，我按展位真实资料给您对齐一下：\n\n"
+            if prior_user_rounds == 0
+            else "接上您问的，我从展台 SKU 里给您收窄几支重点款：\n\n"
+        )
+        chunks: list[str] = []
+        for p in showcase_products:
+            price = f"¥{p.price:g}" if p.price is not None else "请以展台标价为准"
+            feats = [
+                sp.text for sp in p.selling_points[:3]
+            ] or ["现场试写顺滑与干速最直观"]
+            feat_line = "；".join(feats)
+            chunks.append(
+                f"【{p.name}】（SKU `{p.sku}`）\n"
+                f"- 价格：{price}\n"
+                f"- 主图（H5 可展示）：{p.primary_image}\n"
+                f"- 特点：{feat_line}\n"
+            )
+        closing = (
+            "\n您更在意「写得顺手」「干得快」还是「预算」？说一声我可以帮您从上面再缩到 1～2 支对着试写。"
+        )
+        return lead + "\n".join(chunks) + closing
+
+    @staticmethod
+    def _generate_general_response(
+        message: str,
+        history: list[ChatMessage] | None = None,
+        *,
+        showcase_products: list[Product] | None = None,
+    ) -> str:
         """
         本地通用导购（未识图 / 无 SKU）：按「展台参谋」视角，少提库、多给可执行建议。
         history 为当前轮之前已确认的往返，不含本条 user message。
@@ -300,6 +443,10 @@ class ChatService:
         prior_user_rounds = sum(1 for m in history if m.role == "user")
         text = message.strip()
         t = text.lower()
+        showcase_products = showcase_products or []
+
+        if showcase_products and ChatService.wants_pen_catalog_answer(text):
+            return ChatService._template_catalog_recommendation(showcase_products, history)
 
         # —— 意图：尽量覆盖逛展用户的真实问法 ——
         is_child = any(k in text for k in ("孩子", "小学", "作业", "三年级", "学生", "写字"))
@@ -397,8 +544,12 @@ class ChatService:
                 point_bits.append("书写顺滑，长时间写也不容易累手")
             elif "速干" in tx or "干" in tx:
                 point_bits.append("墨水相对易干，日常书写不容易蹭花")
-            elif "握" in tx or "舒适" in tx:
-                point_bits.append("握持区设计偏舒适")
+            elif "握" in tx or "舒适" in tx or "人体工学" in tx or "工学" in tx:
+                point_bits.append("握持区设计偏舒适，长时间写也不易累手")
+            elif "防滑" in tx:
+                point_bits.append("笔杆触感更稳，手汗多也不容易打滑")
+            elif "mm" in tx or "笔尖" in tx:
+                point_bits.append("笔尖规格适合日常书写，线条粗细好控制")
             else:
                 point_bits.append(tx)
         main = "；".join(point_bits) if point_bits else (product.selling_points[0].text if product.selling_points else "口碑与品控都比较稳")
@@ -487,77 +638,98 @@ class ChatService:
         )
 
     @staticmethod
-    def _build_general_system_prompt(summary: str | None = None) -> str:
+    def _build_general_system_prompt(
+        summary: str | None = None, *, catalog_block: str = ""
+    ) -> str:
         """
         构建通用对话的系统提示词（远程 LLM 用）
         """
-        base = """你是线下展区里熟悉中性笔的购物参谋。用户未必对应到某一固定 SKU，你要仍能给可执行的选购指导。
+        base = """你是线下展区里熟悉中性笔的购物参谋。用户未必拍清某一支笔，你仍要依据下方【展位 SKU 清单】做可执行建议。
 
 【态度】
-1. 少强调「不在库里」，多给现场能用的试写与筛选方法。
+1. 推荐、对比、选型时：只能引用【展位 SKU 清单】里出现的款；禁止编造清单外的具体型号与价格。
 2. 先对齐用户场景（孩子作业/办公/手汗/预算）再建议。
-3. 不编造具体库存与促销；参数以用户现场标签为准。
+3. 每条推荐写清：笔的全称、大致价位、1～2 条核心特性，并提到主图路径便于顾客在屏上对照。
+4. 不确定时引导现场试写三步（顺滑/干速/握感），但不要脱离清单胡编。
 
 【结构】
 - 先一句接住用户情绪或场景
-- 再给 2～4 条可照做的建议
-- 最后一句邀请用户说下一个顾虑点
+- 再给 2～4 条可照做的建议；若用户要推荐，列出 1～2 个清单内 SKU 并说明理由
+- 最后一句邀请用户说下一个顾虑点或去试写哪一支
 """
+        if catalog_block.strip():
+            base += "\n【展位 SKU 清单（权威来源）】\n" + catalog_block.strip() + "\n"
         if summary:
             base += f"\n【此前对话摘要】\n{summary}\n回复时请承接上文，避免重复空话。"
         return base
 
     def _answer_with_general_llm(
-        self, 
-        message: str, 
+        self,
+        message: str,
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None,
-        summary: str | None = None
+        history: list[ChatMessage] | None = None,
+        summary: str | None = None,
+        *,
+        catalog_block: str = "",
     ) -> str | None:
         """
         调用远程 LLM 进行通用对话，支持对话历史上下文
         """
+        endpoint = settings.llm_base_url.rstrip("/")
+        if not endpoint.endswith("/v1/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+
+        history = history or []
         try:
-            system_prompt = self._build_general_system_prompt(summary)
-            
-            # 构建消息列表
+            system_prompt = self._build_general_system_prompt(
+                summary, catalog_block=catalog_block
+            )
+
             messages = [
                 {"role": "system", "content": system_prompt},
             ]
-            
-            # 添加历史对话
+
             if history:
                 for msg in history[-6:]:
                     role = msg.role
                     api_role = "assistant" if role in ("assistant", "ai") else "user"
                     messages.append({"role": api_role, "content": msg.content})
-            
-            # 添加当前问题
-            messages.append({
-                "role": "user", 
-                "content": f"【用户新问题】\n{message}\n\n请基于对话历史和通用知识，自然回应，不要重复之前的内容。"
-            })
-            
+
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"【用户新问题】\n{message}\n\n"
+                        "请基于展位 SKU 清单与对话历史自然回应；若要推荐笔，务必从清单中选并写出名称、价格感知与特性。"
+                    ),
+                }
+            )
+
             payload = {
                 "model": settings.llm_model or "qwen-plus",
                 "temperature": 0.7,
                 "messages": messages,
             }
-            
+
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {settings.llm_api_key}",
             }
-            
+
             req = urllib.request.Request(
-                f"{settings.llm_base_url.rstrip('/')}/v1/chat/completions",
+                endpoint,
                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                 headers=headers,
                 method="POST",
             )
-            
+
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
+            self._stash_llm_debug(
+                {"mode": "general_llm", "endpoint": endpoint, "payload": payload}
+            )
+            return content
         except Exception:
+            self._stash_llm_debug(None)
             return None

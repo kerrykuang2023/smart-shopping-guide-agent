@@ -139,6 +139,8 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = Field(default_factory=list)  # 对话历史
     summary: str | None = None  # 短期记忆摘要
+    #: 为 true 时响应携带 debug_trace（含 LLM messages 快照，仅供联调）
+    debug_trace: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -148,6 +150,10 @@ class ChatResponse(BaseModel):
     source: str = "knowledge_base"  # knowledge_base, remote_llm, general_knowledge
     summary: str | None = None  # 更新后的摘要
     history: list[ChatMessage] | None = None  # 更新后的历史记录
+    #: 通用模式下「推荐展台笔」等意图时附带可渲染的商品卡片
+    suggested_products: list[ProductRef] = Field(default_factory=list)
+    #: 当请求 debug_trace=true 时回填
+    debug_trace: dict[str, Any] | None = None
 
 
 class TestConnectionRequest(BaseModel):

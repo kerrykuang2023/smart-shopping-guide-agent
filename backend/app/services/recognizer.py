@@ -74,6 +74,73 @@ class RecognizerService:
             return RecognitionResult(sku=choice(allowed_skus), confidence=0.88, reason="mock_provider_random_sku")
         return RecognitionResult(sku=None, confidence=0.0, reason="mock_no_vlm_url")
 
+    @staticmethod
+    def build_recognition_prompt(allowed_skus: list[str]) -> str:
+        """与 _recognize_via_http 发往 VLM 的文本完全一致，供前端 / 运维调试展示。"""
+        return (
+            "你是展区「签字笔/中性笔」识别助手。仅当画面里能较清晰看出与下列某一款陈列笔对应时，输出 JSON："
+            '{"sku":"<列表中的 SKU 或 null>","confidence":0.0-1.0}。\n'
+            f"可选 SKU（只能从中选或填 null）: {', '.join(allowed_skus)}。\n"
+            "规则：若画面不是笔、无法确认是下列某一款、或主体与笔无关，必须输出 \"sku\": null，confidence 建议 ≤0.35；"
+            "严禁在不确定时从列表里猜一个 SKU。"
+        )
+
+    @staticmethod
+    def build_recognition_api_trace(
+        *,
+        vlm_base_url: str,
+        vlm_model: str,
+        allowed_skus: list[str],
+        image_bytes: bytes,
+        recognizer_reason: str,
+    ) -> dict:
+        """H5 「雷达页」展示的调用说明：含完整 user 文本 prompt、messages 结构与图片占位（不落盘 base64）。"""
+        prompt = RecognizerService.build_recognition_prompt(allowed_skus)
+        b64_len = len(base64.b64encode(image_bytes))
+        img_note = (
+            f"data:image/png;base64,<omitted — {b64_len} encoded chars "
+            f"from {len(image_bytes)} bytes upload>"
+        )
+        msg_structure = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": img_note}},
+                ],
+            }
+        ]
+        if not (vlm_base_url or "").strip():
+            return {
+                "phase": "local_fallback",
+                "note": "vlm_base_url 为空，未发起远端 HTTP；以下为若启用 VLM 时等同的请求体语义。",
+                "http": None,
+                "vlm_model": vlm_model,
+                "temperature": 0,
+                "messages": msg_structure,
+                "user_text_prompt": prompt,
+                "allowed_skus": list(allowed_skus),
+                "upload": {"bytes": len(image_bytes)},
+                "recognizer_reason": recognizer_reason,
+            }
+        endpoint = RecognizerService.openai_chat_completions_url(vlm_base_url)
+        return {
+            "phase": "openai_compatible_vlm",
+            "note": "POST 体与 RecognizerService 真实调用一致（图片仅以占位表示，避免 JSON 臃肿）。",
+            "http": {"method": "POST", "url": endpoint},
+            "headers_shape": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer <runtime vlm_api_key or omitted>",
+            },
+            "vlm_model": vlm_model,
+            "temperature": 0,
+            "messages": msg_structure,
+            "user_text_prompt": prompt,
+            "allowed_skus": list(allowed_skus),
+            "upload": {"bytes": len(image_bytes)},
+            "recognizer_reason": recognizer_reason,
+        }
+
     def _recognize_via_http(
         self,
         image_bytes: bytes,
@@ -90,13 +157,7 @@ class RecognizerService:
         endpoint = RecognizerService.openai_chat_completions_url(vlm_base_url)
 
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
-        prompt = (
-            "你是展区「签字笔/中性笔」识别助手。仅当画面里能较清晰看出与下列某一款陈列笔对应时，输出 JSON："
-            '{"sku":"<列表中的 SKU 或 null>","confidence":0.0-1.0}。\n'
-            f"可选 SKU（只能从中选或填 null）: {', '.join(allowed_skus)}。\n"
-            "规则：若画面不是笔、无法确认是下列某一款、或主体与笔无关，必须输出 \"sku\": null，confidence 建议 ≤0.35；"
-            "严禁在不确定时从列表里猜一个 SKU。"
-        )
+        prompt = RecognizerService.build_recognition_prompt(allowed_skus)
         payload = {
             "model": vlm_model,
             "temperature": 0,
