@@ -1,0 +1,136 @@
+sku: "hero-359-black-fine"
+name: "英雄 359 经典铱金钢笔 F 尖"
+category: "钢笔"
+brand: "英雄（HERO）"
+price: 45.0
+
+primary_image: "/images/hero-359-hero.webp"
+
+gallery:
+  - url: "/images/hero-359-front.webp"
+    angle: "front"
+    caption: "经典黑金配色"
+  - url: "/images/hero-359-nib.webp"
+    angle: "detail"
+    caption: "镀金铱金笔尖特写"
+  - url: "/images/hero-359-cap.webp"
+    angle: "detail"
+    caption: "金属笔帽与笔夹"
+  - url: "/images/hero-359-converter.webp"
+    angle: "detail"
+    caption: "上墨器结构"
+  - url: "/images/hero-359-writing.webp"
+    angle: "in-use"
+    caption: "经典书写笔触"
+  - url: "/images/hero-359-package.webp"
+    angle: "package"
+    caption: "礼盒包装"
+
+selling_points:
+  - text: "英雄牌——中国民族钢笔品牌，1931 年创立"
+    image: "/images/hero-brand-history.webp"
+  - text: "1962 年与派克公司技术合作衍生的经典型号"
+  - text: "镀金铱金笔尖，书写顺滑且耐用"
+    image: "/images/hero-359-nib.webp"
+  - text: "金属笔身，质感扎实，适合长期使用"
+  - text: "标配上墨器，可吸取任意瓶装墨水"
+  - text: "国货情怀+商务质感，礼品和自用兼宜"
+
+specs:
+  - "笔尖材质：铱金合金（镀 14K）"
+  - "笔尖规格：F（细尖，约 0.5mm）/ M（中尖，约 0.7mm）"
+  - "笔身材质：黄铜镀漆 + 金属笔夹"
+  - "上墨方式：上墨器吸墨 / 墨囊（兼容）"
+  - "重量：约 24g"
+  - "笔帽：旋转式金属笔帽"
+  - "原产地：中国上海"
+
+target_users:
+  - "商务人士：合同签字、重要场合"
+  - "钢笔爱好者：入门款"
+  - "送礼：长辈、领导、毕业礼物"
+  - "学生：练字、书法入门"
+
+use_cases:
+  - "重要文件签字"
+  - "练字与书法"
+  - "礼品馈赠"
+  - "怀旧情怀收藏"
+
+related_products:
+  - sku: "hero-ink-bottle"
+    name: "英雄 234 黑色瓶装墨水 60ml"
+    image: "/images/hero-ink.webp"
+    price: 12
+    bundle_discount: 0
+    reason: "钢笔必备耗材，原厂墨水流畅性最佳"
+  
+  - sku: "leather-pen-pouch"
+    name: "复古真皮单笔笔袋"
+    image: "/images/leather-pouch.webp"
+    price: 35
+    bundle_discount: 5
+    reason: "钢笔保护，提升礼品质感"
+  
+  - sku: "hero-cleaning-kit"
+    name: "钢笔清洗保养套装"
+    image: "/images/pen-cleaning.webp"
+    price: 18
+    reason: "延长钢笔使用寿命"
+  
+  - sku: "tomoe-river-paper"
+    name: "Tomoe River 钢笔专用纸笔记本"
+    image: "/images/tomoe-paper.webp"
+    price: 95
+    reason: "钢笔最佳搭档纸张，书写更流畅"
+
+competitors:
+  - sku: "lamy-safari"
+    name: "LAMY 凌美 Safari 钢笔"
+    image: "/images/lamy-safari.webp"
+    price: 280
+    our_advantages:
+      - "国货价格仅 1/6，性价比突出"
+      - "中国书写习惯调教更佳"
+      - "民族品牌情怀加分"
+    their_advantages:
+      - "德国工艺与设计感更强"
+      - "国际品牌认知度高"
+      - "颜色更多样"
+  
+  - sku: "pilot-78g"
+    name: "PILOT 百乐 78G 钢笔"
+    image: "/images/pilot-78g.webp"
+    price: 168
+    our_advantages:
+      - "金属笔身更显档次（百乐 78G 为塑料）"
+      - "国货支持"
+      - "价格优势明显"
+    their_advantages:
+      - "日本工艺出墨控制更精细"
+      - "笔尖弹性更好"
+  
+  - sku: "pilot-g2-black-0.7"
+    name: "PILOT 百乐 G2 中性笔 黑色 0.7mm"
+    image: "/images/pilot-g2-hero.webp"
+    price: 18
+    our_advantages:
+      - "钢笔的仪式感和书写美感是中性笔无法比拟的"
+      - "适合礼品、签字等正式场合"
+      - "可长期使用，不像中性笔需频繁换芯"
+    their_advantages:
+      - "携带便捷，无需保养"
+      - "出墨稳定，无漏墨风险"
+
+promotions:
+  - title: "礼盒装"
+    description: "购买礼盒装赠送墨水一瓶"
+  - title: "练字优惠"
+    description: "凭学生证享 9 折优惠"
+
+metadata:
+  product_code: "HERO-359"
+  release_year: 1962
+  brand_founding: 1931
+  market_position: "国货传统经典"
+  cultural_value: "民国时期至今的国民书写工具"

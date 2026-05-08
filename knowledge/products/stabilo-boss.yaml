@@ -1,0 +1,130 @@
+sku: "stabilo-boss-yellow"
+name: "Stabilo Boss Original 经典荧光笔 黄色"
+category: "荧光笔"
+brand: "Stabilo 思笔乐（德国）"
+price: 12.0
+
+primary_image: "/images/stabilo-boss-hero.webp"
+
+gallery:
+  - url: "/images/stabilo-boss-front.webp"
+    angle: "front"
+    caption: "标志性扁平笔身"
+  - url: "/images/stabilo-boss-tip.webp"
+    angle: "detail"
+    caption: "斜切楔形笔尖"
+  - url: "/images/stabilo-boss-cap.webp"
+    angle: "detail"
+    caption: "防干燥笔帽"
+  - url: "/images/stabilo-boss-writing.webp"
+    angle: "in-use"
+    caption: "粗细两种线条效果"
+  - url: "/images/stabilo-boss-colors.webp"
+    angle: "lifestyle"
+    caption: "全色系展示"
+
+selling_points:
+  - text: "全球第一荧光笔品牌，德国 Stabilo 自 1971 年首创荧光笔以来畅销至今"
+    image: "/images/stabilo-brand.webp"
+  - text: "斜切楔形笔尖，一笔可写粗（5mm）细（2mm）两种线条"
+    image: "/images/stabilo-boss-tip.webp"
+  - text: "Anti-Dry-Out 防干燥技术，开盖 4 小时不干"
+  - text: "墨水鲜艳持久，不易褪色，复印不影响"
+  - text: "经典扁平流线造型，桌面摆放稳固不易滚落"
+  - text: "提供 6 种荧光色 + 9 种柔和色，共 15 种颜色"
+
+specs:
+  - "笔尖类型：斜切楔形纤维笔尖"
+  - "线宽：粗 5mm / 细 2mm"
+  - "墨水类型：水性荧光墨水"
+  - "颜色（本款）：荧光黄"
+  - "全系颜色：黄 / 橙 / 粉 / 绿 / 蓝 / 紫 等 15 色"
+  - "笔身长度：105mm"
+  - "原产地：德国 Heroldsberg"
+
+target_users:
+  - "学生：教材重点标记、笔记整理"
+  - "白领：合同关键条款标记"
+  - "教师：批改作业、备课"
+  - "手账爱好者：装饰、配色"
+
+use_cases:
+  - "教材重点划线"
+  - "笔记标重点"
+  - "合同关键条款"
+  - "手账装饰"
+  - "颜色编码分类"
+
+related_products:
+  - sku: "stabilo-boss-set-6"
+    name: "Stabilo Boss 经典 6 色套装"
+    image: "/images/stabilo-set-6.webp"
+    price: 60
+    bundle_discount: 12
+    reason: "套装比单支更划算，颜色编码学习更高效"
+  
+  - sku: "stabilo-pastel-set"
+    name: "Stabilo Boss Pastel 柔和色 6 色套装"
+    image: "/images/stabilo-pastel.webp"
+    price: 65
+    reason: "ins 风手账爱好者必备，柔和色不刺眼"
+  
+  - sku: "muji-notebook-grid"
+    name: "无印良品方格笔记本 A5"
+    image: "/images/muji-notebook.webp"
+    price: 25
+    reason: "极简配色，配荧光笔效果突出"
+  
+  - sku: "stabilo-pointMax"
+    name: "Stabilo PointMax 纤维笔"
+    image: "/images/stabilo-pointmax.webp"
+    price: 15
+    reason: "Stabilo 同品牌搭配，手账配色完整"
+
+competitors:
+  - sku: "kokuyo-beetle-tip"
+    name: "KOKUYO 国誉 PERPANEP 双头荧光笔"
+    image: "/images/kokuyo-highlighter.webp"
+    price: 18
+    our_advantages:
+      - "Stabilo 是荧光笔品类发明者，技术最成熟"
+      - "防干燥时间业界最长（4 小时）"
+      - "颜色饱和度更高"
+    their_advantages:
+      - "双头设计一笔多用"
+      - "日系细腻配色"
+  
+  - sku: "chenguang-highlighter"
+    name: "晨光 荧光笔 双头大容量"
+    image: "/images/chenguang-highlighter.webp"
+    price: 4
+    our_advantages:
+      - "德国进口品质，墨水浓度更高"
+      - "笔尖耐用度更好（约 5 倍寿命）"
+      - "防干燥技术领先"
+    their_advantages:
+      - "价格仅 1/3"
+      - "学生群体经济实用"
+  
+  - sku: "zebra-mildliner"
+    name: "ZEBRA 斑马 Mildliner 双头荧光笔"
+    image: "/images/zebra-mildliner.webp"
+    price: 12
+    our_advantages:
+      - "经典款式更具识别度"
+      - "颜色更鲜艳醒目"
+    their_advantages:
+      - "柔和色更适合做手账"
+      - "双头设计更灵活"
+
+promotions:
+  - title: "学生季优惠"
+    description: "9 月开学季，5 支装立减 10 元"
+  - title: "套装更划算"
+    description: "购买 6 色套装赠送笔袋一个"
+
+metadata:
+  product_code: "70/24"
+  release_year: 1971
+  market_position: "学生与办公兼用经典款"
+  trivia: "全球第一支荧光笔就是 Stabilo Boss，开创了整个品类"

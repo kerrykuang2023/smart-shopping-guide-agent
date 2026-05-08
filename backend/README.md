@@ -18,17 +18,19 @@ FastAPI-based backend service running on the edge compute box (FusionXpark GB10 
 - Qdrant (vector DB for knowledge base)
 - vLLM (optimized inference, optional)
 
-## API Endpoints (Planned)
+## API Endpoints (Phase 1 Implemented)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/recognize` | Upload image → return product info + guide |
-| WS | `/chat/{sku}` | Real-time Q&A about a specific product |
-| GET | `/products` | List all products in knowledge base |
-| GET | `/products/{sku}` | Get specific product details |
-| POST | `/products` | Add new product to knowledge base (admin) |
-| GET | `/tts?text=...` | Text-to-speech streaming |
-| GET | `/health` | Health check for monitoring |
+| GET | `/api/v1/health` | Health check for monitoring |
+| GET | `/api/v1/products` | List all products in knowledge base |
+| GET | `/api/v1/products/{sku}` | Get specific product details |
+| POST | `/api/v1/recognize` | Upload image → return SKU + guide + recommendations |
+| GET | `/api/v1/qrcode` | Generate PNG QR code for mobile H5 entry (`/m`) |
+| GET | `/api/v1/logs` | Recent activity logs for Console |
+| GET | `/api/v1/settings` | Read runtime URL placeholders |
+| PUT | `/api/v1/settings` | Update runtime URL placeholders |
+| GET | `/images/{filename}` | Static image hosting with optional resize (`w`, `q`) |
 
 ## Quick Start
 
@@ -36,9 +38,33 @@ FastAPI-based backend service running on the edge compute box (FusionXpark GB10 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run service
+# Run service (from backend/)
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
+
+### Environment Variables
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `DEMO_MODE` | `true` | Recognition failures are gracefully mocked for stable demos |
+| `RECOGNITION_CONFIDENCE_THRESHOLD` | `0.6` | Confidence gate before fallback |
+| `VLM_PROVIDER` | `mock` | `mock` or `qwen` (placeholder hook) |
+| `WORKSPACE_DIR` | auto-detected | Project root |
+| `KNOWLEDGE_PRODUCTS_DIR` | `knowledge/products` | YAML product directory |
+| `IMAGE_DIR` | `knowledge/images` | Image directory |
+
+### Runtime URL Placeholders (Console)
+
+The Console provides UI fields for:
+- `vlm_base_url`
+- `llm_base_url`
+- `qdrant_url`
+- `apphub_url`
+
+Current behavior:
+- If `vlm_base_url` is configured, recognition will try OpenAI-compatible endpoint  
+  `POST {vlm_base_url}/v1/chat/completions` (unless URL already ends with that path).
+- If remote VLM call fails, service falls back according to `DEMO_MODE`.
 
 ## Docker Deployment
 
@@ -52,4 +78,5 @@ docker run --gpus all -p 8080:8080 \
 
 ## Status
 
-> Phase 1 - MVP under development
+> Phase 1 backend scaffold is running with PRD-aligned APIs.  
+> Next: Qwen2.5-VL real inference integration + Qdrant retrieval + frontend scaffolds.

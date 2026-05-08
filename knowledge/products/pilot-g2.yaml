@@ -1,0 +1,125 @@
+sku: "pilot-g2-black-0.7"
+name: "PILOT 百乐 G2 啫喱中性笔 黑色 0.7mm"
+category: "中性笔"
+brand: "PILOT 百乐（日本）"
+price: 18.0
+
+primary_image: "/images/pilot-g2-hero.webp"
+
+gallery:
+  - url: "/images/pilot-g2-front.webp"
+    angle: "front"
+    caption: "经典透明笔身可见墨量"
+  - url: "/images/pilot-g2-tip.webp"
+    angle: "detail"
+    caption: "G2 专利啫喱笔尖"
+  - url: "/images/pilot-g2-grip.webp"
+    angle: "detail"
+    caption: "舒适软胶握把"
+  - url: "/images/pilot-g2-writing.webp"
+    angle: "in-use"
+    caption: "如丝般顺滑的书写体验"
+  - url: "/images/pilot-g2-package.webp"
+    angle: "package"
+    caption: "日本原装进口包装"
+
+selling_points:
+  - text: "PILOT 百乐——日本国民第一笔品牌，全球年销超 10 亿支"
+    image: "/images/pilot-brand.webp"
+  - text: "G2 专利啫喱墨水，全球公认最顺滑的中性笔之一"
+    image: "/images/pilot-g2-tip.webp"
+  - text: "可视墨水仓，剩余墨量一目了然"
+  - text: "TPE 软胶握把，长时间书写不易疲劳"
+  - text: "墨水耐光防水，资料保存更持久"
+  - text: "笔芯可替换，环保设计减少浪费"
+
+specs:
+  - "笔尖类型：G2 啫喱型笔尖"
+  - "笔尖规格：0.5mm / 0.7mm / 1.0mm"
+  - "墨水类型：啫喱型中性墨水（gel ink）"
+  - "墨水颜色：黑 / 蓝 / 红 / 绿 等 12 色"
+  - "笔身材质：透明 PC 塑料 + TPE 软胶"
+  - "原产地：日本"
+
+target_users:
+  - "白领：商务签字、合同审批"
+  - "设计师：插画、笔记"
+  - "学生（高端市场）：考试、笔记"
+  - "送礼：商务礼品"
+
+use_cases:
+  - "重要合同签字"
+  - "礼品赠送"
+  - "高端笔记本搭配"
+  - "学生进阶"
+
+related_products:
+  - sku: "moleskine-classic-notebook"
+    name: "Moleskine 经典笔记本 A5"
+    image: "/images/moleskine-notebook.webp"
+    price: 168
+    bundle_discount: 10
+    reason: "国际品牌组合，商务高端体验"
+  
+  - sku: "pilot-g2-refill"
+    name: "PILOT 百乐 G2 笔芯（3 支装）"
+    image: "/images/pilot-g2-refill.webp"
+    price: 28
+    reason: "原装日本进口笔芯，体验一致"
+  
+  - sku: "pilot-g2-set-3color"
+    name: "PILOT 百乐 G2 三色套装（黑蓝红）"
+    image: "/images/pilot-g2-set.webp"
+    price: 48
+    reason: "套装更划算，多色满足不同场景"
+
+competitors:
+  - sku: "chenguang-k35-black-0.5"
+    name: "晨光 K35 中性笔 黑色 0.5mm"
+    image: "/images/chenguang-k35-hero.webp"
+    price: 2.5
+    our_advantages:
+      - "日本进口品质，顺滑度和耐用度更优"
+      - "G2 专利墨水公认业内标杆"
+      - "高端场合更显档次"
+    their_advantages:
+      - "价格仅 1/7，国产高性价比"
+      - "国民品牌覆盖率高"
+  
+  - sku: "deli-s01-black-0.5"
+    name: "得力 S01 中性笔 黑色 0.5mm"
+    image: "/images/deli-s01-hero.webp"
+    price: 3.0
+    our_advantages:
+      - "墨水技术领先一代"
+      - "握感舒适度更高"
+      - "国际品牌商务认可度强"
+    their_advantages:
+      - "国产价格更友好"
+      - "企业批量采购成本优势"
+  
+  - sku: "zebra-sarasa-clip"
+    name: "ZEBRA 斑马 SARASA 中性笔"
+    image: "/images/zebra-sarasa.webp"
+    price: 15
+    our_advantages:
+      - "G2 笔尖专利技术更成熟"
+      - "墨水流量控制更稳定"
+    their_advantages:
+      - "颜色种类更丰富"
+      - "速干墨水左撇子友好"
+
+promotions:
+  - title: "进口尝鲜价"
+    description: "首次购买 3 支立减 8 元"
+  - title: "买笔送笔芯"
+    description: "购买任意 G2 套装赠送同色笔芯 1 支"
+
+metadata:
+  product_code: "BL-G2-7"
+  release_year: 1999
+  generations: "全球第 4 代"
+  market_position: "进口高端"
+  awards:
+    - "ISOT 日本文具大赏"
+    - "美国办公用品协会金奖"

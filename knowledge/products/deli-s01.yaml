@@ -1,0 +1,105 @@
+sku: "deli-s01-black-0.5"
+name: "得力 S01 顺滑中性笔 黑色 0.5mm"
+category: "中性笔"
+brand: "得力（Deli）"
+price: 3.0
+
+primary_image: "/images/deli-s01-hero.webp"
+
+gallery:
+  - url: "/images/deli-s01-front.webp"
+    angle: "front"
+    caption: "商务风格全黑笔身"
+  - url: "/images/deli-s01-tip.webp"
+    angle: "detail"
+    caption: "针管型笔尖特写"
+  - url: "/images/deli-s01-clip.webp"
+    angle: "detail"
+    caption: "强韧笔夹"
+  - url: "/images/deli-s01-writing.webp"
+    angle: "in-use"
+    caption: "顺滑书写效果"
+
+selling_points:
+  - text: "中国办公用品第一品牌，企业采购首选"
+    image: "/images/deli-brand.webp"
+  - text: "针管型笔尖，书写细腻精准"
+    image: "/images/deli-s01-tip.webp"
+  - text: "全黑商务设计，会议场合更得体"
+  - text: "顺滑出墨技术，长时间书写不疲劳"
+  - text: "金属笔夹，可固定于本子或西装口袋"
+
+specs:
+  - "笔尖类型：针管型中性笔尖"
+  - "笔尖规格：0.5mm"
+  - "墨水颜色：黑色 / 蓝色"
+  - "笔身材质：磨砂橡胶 + 金属笔夹"
+  - "笔身长度：143mm"
+  - "原产地：中国宁波"
+
+target_users:
+  - "上班族：日常办公"
+  - "企业采购：批量采购首选"
+  - "公务员：会议、签字、批文"
+
+use_cases:
+  - "办公会议"
+  - "合同签字"
+  - "财务记账"
+  - "日常文书"
+
+related_products:
+  - sku: "deli-stapler"
+    name: "得力 0457 标准订书机"
+    image: "/images/deli-stapler.webp"
+    price: 15
+    reason: "办公桌面套装，得力品牌一站式办公"
+  
+  - sku: "deli-notebook-b5"
+    name: "得力 B5 商务笔记本"
+    image: "/images/deli-notebook.webp"
+    price: 18
+    bundle_discount: 3
+    reason: "商务搭配，公司采购常见组合"
+  
+  - sku: "deli-refill-s01"
+    name: "得力 S01 笔芯（10 支装）"
+    image: "/images/deli-refill.webp"
+    price: 10
+    reason: "原装替换芯，长期使用更经济"
+
+competitors:
+  - sku: "chenguang-k35-black-0.5"
+    name: "晨光 K35 中性笔 黑色 0.5mm"
+    image: "/images/chenguang-k35-hero.webp"
+    price: 2.5
+    our_advantages:
+      - "针管型笔尖书写更精准"
+      - "办公直采渠道优势"
+      - "商务设计感更强"
+    their_advantages:
+      - "晨光品牌大众认知度高"
+      - "学生市场占有率领先"
+      - "价格略低"
+  
+  - sku: "pilot-g2-black-0.7"
+    name: "PILOT 百乐 G2 中性笔 黑色 0.7mm"
+    image: "/images/pilot-g2-hero.webp"
+    price: 18
+    our_advantages:
+      - "性价比突出，企业批量采购优选"
+      - "国产笔尖工艺已可媲美"
+    their_advantages:
+      - "顺滑度业内顶尖"
+      - "高端场合品牌加分"
+
+promotions:
+  - title: "企业采购优惠"
+    description: "采购 100 支以上享 8 折优惠"
+  - title: "新品体验装"
+    description: "5 支装首次购买立减 5 元"
+
+metadata:
+  product_code: "S01"
+  release_year: 2019
+  market_position: "办公主力款"

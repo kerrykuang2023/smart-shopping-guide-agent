@@ -1,0 +1,105 @@
+sku: "chenguang-k35-black-0.5"
+name: "晨光优品 K35 经典中性笔 黑色 0.5mm"
+category: "中性笔"
+brand: "晨光（M&G）"
+price: 2.5
+
+primary_image: "/images/chenguang-k35-hero.webp"
+
+gallery:
+  - url: "/images/chenguang-k35-front.webp"
+    angle: "front"
+    caption: "经典磨砂质感笔身"
+  - url: "/images/chenguang-k35-tip.webp"
+    angle: "detail"
+    caption: "0.5mm 子弹头笔尖"
+  - url: "/images/chenguang-k35-clip.webp"
+    angle: "detail"
+    caption: "金属笔夹设计"
+  - url: "/images/chenguang-k35-writing.webp"
+    angle: "in-use"
+    caption: "书写效果实拍"
+
+selling_points:
+  - text: "国民文具第一品牌晨光出品，全国销量过亿支"
+    image: "/images/chenguang-brand.webp"
+  - text: "0.5mm 子弹头笔尖，出墨流畅不断墨"
+    image: "/images/chenguang-k35-tip.webp"
+  - text: "经典磨砂笔身设计，握感舒适不打滑"
+  - text: "高品质中性墨水，速干不晕染"
+  - text: "性价比首选，办公学习日常签字标配"
+
+specs:
+  - "笔尖类型：子弹头中性笔尖"
+  - "笔尖规格：0.5mm"
+  - "墨水颜色：黑色 / 蓝色 / 红色（可选）"
+  - "笔身材质：ABS 工程塑料 + 金属笔夹"
+  - "适用纸张：普通办公纸、笔记本"
+  - "原产地：中国"
+
+target_users:
+  - "学生：日常作业、考试"
+  - "上班族：会议笔记、合同签字"
+  - "采购员：办公耗材首选"
+
+use_cases:
+  - "课堂笔记"
+  - "办公签字"
+  - "考试用笔"
+  - "日常书写"
+
+related_products:
+  - sku: "chenguang-notebook-a5"
+    name: "晨光 A5 经典笔记本"
+    image: "/images/chenguang-notebook.webp"
+    price: 12
+    bundle_discount: 2
+    reason: "搭配晨光笔记本，记录顺滑配套"
+  
+  - sku: "chenguang-refill-k35"
+    name: "晨光 K35 笔芯（10 支装）"
+    image: "/images/chenguang-refill.webp"
+    price: 8
+    reason: "替换芯，节约成本，环保选择"
+  
+  - sku: "deli-eraser"
+    name: "得力 4B 橡皮擦"
+    image: "/images/deli-eraser.webp"
+    price: 2
+    reason: "学习场景常用搭配"
+
+competitors:
+  - sku: "deli-s01-black-0.5"
+    name: "得力 S01 中性笔 黑色 0.5mm"
+    image: "/images/deli-s01-hero.webp"
+    price: 3
+    our_advantages:
+      - "晨光品牌认知度更高，全国铺货"
+      - "学生群体使用习惯首选"
+      - "笔身手感更轻盈"
+    their_advantages:
+      - "得力办公场景渠道更深"
+      - "笔夹更结实"
+  
+  - sku: "pilot-g2-black-0.7"
+    name: "PILOT 百乐 G2 中性笔 黑色 0.7mm"
+    image: "/images/pilot-g2-hero.webp"
+    price: 18
+    our_advantages:
+      - "国产价格仅为 1/7"
+      - "本土品牌支持"
+      - "学生场景实惠"
+    their_advantages:
+      - "进口品质，墨水更顺滑"
+      - "高端场合更得体"
+
+promotions:
+  - title: "10 支装促销"
+    description: "10 支装仅需 18 元，每支不到 2 元"
+  - title: "满 50 元送笔筒"
+    description: "购买晨光文具满 50 元赠送精美笔筒"
+
+metadata:
+  product_code: "AGP87901"
+  release_year: 2018
+  market_position: "国民入门款"

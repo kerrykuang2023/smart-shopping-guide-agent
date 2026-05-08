@@ -15,7 +15,7 @@ The **primary deployment method for Demo Phase**. Single docker-compose command 
 
 ```bash
 # From project root
-docker compose -f deployment/docker/docker-compose.yml up -d
+docker-compose -f deployment/docker/docker-compose.yml up -d
 ```
 
 Or use the convenience script:
@@ -23,6 +23,8 @@ Or use the convenience script:
 ```bash
 ./scripts/start.sh
 ```
+
+> `scripts/start.sh`/`stop.sh`/`logs.sh` support both `docker-compose` and `docker compose` automatically.
 
 ## What Gets Deployed
 

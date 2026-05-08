@@ -36,10 +36,12 @@
 - [ ] Mobile-optimized navigation
 
 ### Knowledge Base
-- [ ] Choose 3-5 demo SKUs (recommend: 1-2 phones + 1-2 appliances or accessories)
-- [ ] Prepare 5-8 images per SKU (hero, gallery, selling points)
-- [ ] Write product YAML files following schema
-- [ ] Optimize all images (compress, WebP)
+- [x] **Choose demo SKUs: 5 signing pens (locked)** — 晨光 K35 / 得力 S01 / PILOT G2 / 英雄 359 / Stabilo Boss
+- [x] Write product YAML files following schema (5 files in `knowledge/products/`)
+- [ ] Take 25 self-shot photos (5 pens × 5 angles: hero / front / tip / clip / writing)
+- [ ] Source ~30 brand/related/competitor images from official websites
+- [ ] Optimize all images (compress to <300KB, WebP conversion)
+- [ ] Verify image references in YAML files all resolve
 
 ### Deployment (Direct Docker on FusionXpark GB10)
 - [ ] Multi-stage Dockerfile (frontend build + backend runtime)

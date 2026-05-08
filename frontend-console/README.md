@@ -74,4 +74,4 @@ npm run build
 
 ## Status
 
-> Phase 1 - To be implemented
+> Phase 1 - Vue 3 + Vite scaffolding implemented (`src/`, `vite.config.ts`, `package.json`).
