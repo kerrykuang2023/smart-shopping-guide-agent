@@ -205,7 +205,9 @@ async function processImageRecognition(blob: Blob, filename: string) {
         // 显示友好提示
         messages.value.push({
           type: 'ai',
-          text: result.value?.message || '在您的产品库中还未收录该商品，但我可以基于我的知识尽力帮您解答问题。请告诉我您想了解什么？'
+          text: result.value?.message || (
+            '这次没能对上展台里的具体款型，常与光线或角度有关。\n您可以试试对焦笔身上的型号再拍，或直接向我提问——我一样可以帮您参谋。'
+          )
         });
         void speakSmart(messages.value[0]!.text);
       } else {
@@ -712,7 +714,7 @@ onUnmounted(() => {
       </div>
       <!-- 通用对话头部（未识别商品时显示） -->
       <div v-else class="chat-header general">
-        <span class="chat-product-name">💬 通用咨询</span>
+        <span class="chat-product-name">💬 继续为您解答</span>
         <button class="back-to-result" @click="restart">重新拍照</button>
       </div>
       
@@ -723,10 +725,10 @@ onUnmounted(() => {
           <p>👋 我是您的AI导购，请问有什么可以帮您的？</p>
           <p class="hint">例如："这款笔适合学生用吗？"、"和得力的比哪个好？"</p>
         </div>
-        <!-- 初始引导（未识别商品 - 通用对话模式） -->
+      <!-- 未识别商品的初始引导 -->
         <div v-if="messages.length === 0 && !result?.recognized" class="chat-welcome">
-          <p>🔍 这个商品不在我的产品库中</p>
-          <p class="hint">但我可以基于通用知识帮您解答问题，请直接输入您想了解的内容</p>
+          <p>我没法从这张照片里对上某一款陈列笔——这很常见，不妨试试换个角度对焦型号。</p>
+          <p class="hint">您可以直接问我怎么选笔、对比品牌，或使用下方麦克风/键盘继续聊。</p>
         </div>
         
         <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.type]">
@@ -1306,6 +1308,7 @@ onUnmounted(() => {
   border-radius: 20px;
   font-size: 15px;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .message.user .bubble {

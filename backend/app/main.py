@@ -40,7 +40,10 @@ from app.services.tts import get_tts_service
 settings = get_settings()
 knowledge_service = KnowledgeBaseService(settings.knowledge_products_dir)
 guide_service = GuideService()
-recognizer_service = RecognizerService(provider=settings.vlm_provider)
+recognizer_service = RecognizerService(
+    provider=settings.vlm_provider,
+    mock_always_pick_sku=settings.mock_vlm_always_pick_sku,
+)
 activity_log_service = ActivityLogService()
 runtime_settings_service = RuntimeSettingsService(settings.logs_dir / "runtime-settings.json")
 chat_service = ChatService()
@@ -118,6 +121,14 @@ def get_product(sku: str):
     return product
 
 
+# 识图未对上库内笔款时的用户向文案：不指责用户、归因环境、给清晰下一步
+RECOGNITION_AMBIGUOUS_USER_MESSAGE = (
+    "这次没能对上我们展台里的具体哪一支笔，常常和光线、距离或笔尖没露出来有关——不是您的问题。\n"
+    "您可以试试：把笔身上的型号或小标签对准镜头再拍一张；也可以直接问我「怎么选顺滑的中性笔」；"
+    "若您关心的不是笔也没关系，我依然可以陪您聊选购问题。"
+)
+
+
 @app.post("/api/v1/recognize", response_model=RecognitionResponse)
 async def recognize(
     request: Request,
@@ -141,27 +152,43 @@ async def recognize(
     )
     mocked = False
 
-    # 识别失败或置信度太低
-    if not result.sku or result.confidence < settings.recognition_confidence_threshold:
-        # 在非 demo 模式下，返回未识别状态，允许通用对话
-        if not settings.demo_mode:
+    ambiguous = not result.sku or result.confidence < settings.recognition_confidence_threshold
+
+    if ambiguous:
+        # 可选：仅当显式开启 DEMO_RECOGNIZE_FALLBACK_RANDOM 时，才让「未识别」随机挑一款笔展示（易误导）
+        if settings.demo_mode and settings.demo_recognize_fallback_random:
+            fallback = knowledge_service.any_product()
+            if fallback is None:
+                raise HTTPException(status_code=500, detail="Knowledge base is empty.")
+            product = fallback
+            mocked = True
+        else:
+            activity_log_service.add(
+                ActivityLogEntry(
+                    timestamp=datetime.utcnow(),
+                    action="recognize",
+                    sku=None,
+                    confidence=result.confidence,
+                    mocked=False,
+                    client_ip=request.client.host if request.client else None,
+                    details={
+                        "filename": image.filename,
+                        "recognized": False,
+                        "provider_reason": result.reason,
+                    },
+                )
+            )
             return RecognitionResponse(
                 sku=None,
                 confidence=result.confidence,
                 recognized=False,
-                message="在您的产品库中还未收录该商品，但我可以基于我的知识尽力帮您解答问题。请告诉我您想了解什么？",
+                message=RECOGNITION_AMBIGUOUS_USER_MESSAGE,
                 mocked=False,
                 product=None,
                 guide_segments=[],
                 related_products=[],
                 competitors=[],
             )
-        # demo 模式下随机返回一个产品用于演示
-        fallback = knowledge_service.any_product()
-        if fallback is None:
-            raise HTTPException(status_code=500, detail="Knowledge base is empty.")
-        product = fallback
-        mocked = True
     else:
         product = knowledge_service.get_product(result.sku)
         if product is None:

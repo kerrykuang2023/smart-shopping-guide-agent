@@ -22,12 +22,13 @@ class RecognitionResult:
 class RecognizerService:
     """
     Phase-1 recognizer:
-    - provider=mock: deterministic/random fallback for demo stability
+    - provider=mock: 无 VLM 时可「随机命中」用于纯本地演示（由 mock_always_pick_sku 控制）
     - provider=qwen: placeholder hook for future Qwen2.5-VL runtime integration
     """
 
-    def __init__(self, provider: str = "mock") -> None:
+    def __init__(self, provider: str = "mock", *, mock_always_pick_sku: bool = False) -> None:
         self.provider = provider
+        self.mock_always_pick_sku = mock_always_pick_sku
 
     def recognize(
         self,
@@ -61,8 +62,9 @@ class RecognizerService:
             # For now this returns low confidence to trigger demo-mode fallback if enabled.
             return RecognitionResult(sku=None, confidence=0.2, reason="qwen_stub_not_ready")
 
-        # Mock mode: stable demo path.
-        return RecognitionResult(sku=choice(allowed_skus), confidence=0.88, reason="mock_provider")
+        if self.mock_always_pick_sku:
+            return RecognitionResult(sku=choice(allowed_skus), confidence=0.88, reason="mock_provider_random_sku")
+        return RecognitionResult(sku=None, confidence=0.0, reason="mock_no_vlm_url")
 
     def _recognize_via_http(
         self,
@@ -83,10 +85,11 @@ class RecognizerService:
 
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
         prompt = (
-            "你是商品识别助手。仅从下面 SKU 中选择最可能的一个，并输出 JSON："
-            '{"sku":"...", "confidence":0.0-1.0}。'
-            f"可选 SKU: {', '.join(allowed_skus)}。"
-            "如果不确定，confidence 小于 0.5。"
+            "你是展区「签字笔/中性笔」识别助手。仅当画面里能较清晰看出与下列某一款陈列笔对应时，输出 JSON："
+            '{"sku":"<列表中的 SKU 或 null>","confidence":0.0-1.0}。\n'
+            f"可选 SKU（只能从中选或填 null）: {', '.join(allowed_skus)}。\n"
+            "规则：若画面不是笔、无法确认是下列某一款、或主体与笔无关，必须输出 \"sku\": null，confidence 建议 ≤0.35；"
+            "严禁在不确定时从列表里猜一个 SKU。"
         )
         payload = {
             "model": vlm_model,
@@ -129,17 +132,36 @@ class RecognizerService:
         parsed = self._parse_recognition_content(content, allowed_skus)
         if parsed is None:
             return None
-        return RecognitionResult(sku=parsed[0], confidence=parsed[1], reason="remote_vlm")
+        sku, confidence = parsed
+        if sku is None:
+            return RecognitionResult(sku=None, confidence=confidence, reason="remote_vlm_no_catalog_match")
+        return RecognitionResult(sku=sku, confidence=confidence, reason="remote_vlm")
 
     @staticmethod
-    def _parse_recognition_content(content: str, allowed_skus: list[str]) -> tuple[str, float] | None:
+    def _parse_recognition_content(content: str, allowed_skus: list[str]) -> tuple[str | None, float] | None:
+        """返回 (sku, conf)；sku 为 None 表示模型明确判定未命中库内款。无法解析时返回 None。"""
+
+        def _norm_sku(raw: object) -> str | None:
+            if raw is None:
+                return None
+            if isinstance(raw, str):
+                s = raw.strip()
+                if s.lower() in ("", "null", "none", "无", "undefined"):
+                    return None
+                return s
+            return str(raw).strip() or None
+
         # Prefer strict JSON format.
         try:
             payload = json.loads(content)
-            sku = payload.get("sku")
+            sku = _norm_sku(payload.get("sku"))
             confidence = float(payload.get("confidence", 0.5))
+            confidence = max(0.0, min(confidence, 1.0))
+            if sku is None:
+                return None, confidence
             if sku in allowed_skus:
-                return sku, max(0.0, min(confidence, 1.0))
+                return sku, confidence
+            return None, min(confidence, 0.35)
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
 

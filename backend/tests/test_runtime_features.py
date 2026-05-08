@@ -41,6 +41,29 @@ def test_qr_png_is_large_enough_to_be_a_real_qr_code():
     assert len(png) > 1000
 
 
+def test_recognize_returns_soft_ambiguous_when_image_not_a_confident_pen_match():
+    """无 VLM 或未命中库内款时勿「硬怼用户」，应给合作式话术并进入通用咨询。"""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (12, 12), color=(210, 210, 210)).save(buf, format="PNG")
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/v1/recognize",
+            files={"image": ("x.png", buf.getvalue(), "image/png")},
+        )
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["recognized"] is False
+    assert data["sku"] is None
+    assert data["product"] is None
+    assert "不是您的问题" in data["message"]
+
+
 def test_chat_endpoint_returns_knowledge_based_fallback_answer():
     with TestClient(app) as client:
         response = client.post(

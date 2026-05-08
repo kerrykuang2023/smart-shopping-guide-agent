@@ -47,7 +47,7 @@ class ChatService:
                 return remote, False, "remote_llm", new_summary, new_history
 
         # Fallback: 使用本地模板生成话术（简化版，忽略历史）
-        local_answer = self._generate_sales_pitch(product, message)
+        local_answer = self._generate_sales_pitch(product, message, new_history)
         new_history.append(ChatMessage(role="user", content=message))
         new_history.append(ChatMessage(role="assistant", content=local_answer))
         return local_answer, True, "knowledge_base", new_summary, new_history
@@ -75,7 +75,7 @@ class ChatService:
                 new_history.append(ChatMessage(role="assistant", content=remote))
                 return remote, False, "remote_llm", new_summary, new_history
                 
-        local_answer = self._generate_general_response(message)
+        local_answer = self._generate_general_response(message, new_history)
         new_history.append(ChatMessage(role="user", content=message))
         new_history.append(ChatMessage(role="assistant", content=local_answer))
         return local_answer, True, "general_knowledge", new_summary, new_history
@@ -252,10 +252,12 @@ class ChatService:
         # 添加历史对话
         if history:
             for msg in history[-6:]:  # 只保留最近6轮，避免超出 token 限制
-                messages.append({
-                    "role": "assistant" if msg.role == "ai" else msg.role,
-                    "content": msg.content
-                })
+                role = msg.role
+                if role in ("assistant", "ai"):
+                    api_role = "assistant"
+                else:
+                    api_role = "user"
+                messages.append({"role": api_role, "content": msg.content})
         
         # 添加当前问题
         messages.append({
@@ -289,135 +291,222 @@ class ChatService:
             return None
 
     @staticmethod
-    def _generate_sales_pitch(product: Product, message: str) -> str:
+    def _generate_general_response(message: str, history: list[ChatMessage] | None = None) -> str:
         """
-        本地生成销售话术（当 LLM 不可用时使用）
-        比原来的模板更自然、更有感染力
-        """
-        import random
-        
-        # 开场白池
-        openings = [
-            f"您问得真好！{product.name} 确实是我们的明星产品，",
-            f"哈哈，看得出来您对{product.category}很有研究！",
-            f"说实话，{product.name} 我自己也在用，",
-            f"您眼光不错！这款产品特别适合您，",
-        ]
-        
-        # 价值强调句式
-        value_patterns = [
-            "不只是{feature}，更重要的是{benefit}",
-            "很多顾客反馈，用了之后{benefit}",
-            "您可能觉得{feature}没什么，但实际用起来{benefit}",
-        ]
-        
-        # 结尾建议
-        closings = [
-            "您可以亲自体验一下，感受会不一样。",
-            "现在入手挺合适的，售后也有保障。",
-            "要不要我帮您拿一支试试手感？",
-        ]
-        
-        # 构建卖点描述
-        point_texts = []
-        for sp in product.selling_points[:2]:  # 只取前2个卖点，避免啰嗦
-            # 从卖点文本中提取关键词
-            text = sp.text
-            # 尝试构建价值句式
-            if "顺滑" in text or "流畅" in text:
-                point_texts.append(f"书写特别顺滑，长时间写字手不会累")
-            elif "速干" in text or "干" in text:
-                point_texts.append(f"墨水干得很快，写完不会蹭花")
-            elif "握" in text or "舒适" in text:
-                point_texts.append(f"握感很舒服，用久了手也不酸")
-            elif "色" in text or "鲜艳" in text:
-                point_texts.append(f"颜色很正，做标记特别醒目")
-            else:
-                point_texts.append(text)
-        
-        main_pitch = "；".join(point_texts) if point_texts else product.selling_points[0].text if product.selling_points else "品质很过硬"
-        
-        # 竞品对比（轻描淡写）
-        competitor_text = ""
-        if product.competitors:
-            comp = product.competitors[0]
-            if comp.our_advantages:
-                advantage = comp.our_advantages[0]
-                competitor_text = f"跟{comp.name}比起来，{advantage}。"
-        
-        # 搭配推荐
-        related_text = ""
-        if product.related_products:
-            rels = product.related_products[:2]
-            if len(rels) == 2:
-                related_text = f"对了，很多顾客还会搭配{rels[0].name}和{rels[1].name}一起买，用着更顺手。"
-            else:
-                related_text = f"对了，搭配{rels[0].name}一起用效果会更好。"
-        
-        # 组装话术
-        parts = [
-            random.choice(openings),
-            main_pitch + "。",
-        ]
-        
-        if competitor_text:
-            parts.append(competitor_text)
-        
-        if related_text:
-            parts.append(related_text)
-        
-        parts.append(random.choice(closings))
-        
-        return "".join(parts)
-
-    def general_answer(
-        self, 
-        message: str, 
-        settings: RuntimeSettings,
-        history: list[ChatMessage] = None
-    ) -> tuple[str, bool, str]:
-        """
-        通用对话回复（当商品未在知识库中识别时使用），支持对话历史
-        
-        Returns:
-            (answer_text, is_mocked, source)
+        本地通用导购（未识图 / 无 SKU）：按「展台参谋」视角，少提库、多给可执行建议。
+        history 为当前轮之前已确认的往返，不含本条 user message。
         """
         history = history or []
-        
-        # 优先使用远程 LLM 生成回复
-        if settings.llm_base_url.strip():
-            remote = self._answer_with_general_llm(message, settings, history)
-            if remote:
-                return remote, False, "remote_llm"
-        
-        # Fallback: 使用本地模板生成友好的通用回复（简化版，忽略历史）
-        return self._generate_general_response(message), True, "general_knowledge"
-    
+        prior_user_rounds = sum(1 for m in history if m.role == "user")
+        text = message.strip()
+        t = text.lower()
+
+        # —— 意图：尽量覆盖逛展用户的真实问法 ——
+        is_child = any(k in text for k in ("孩子", "小学", "作业", "三年级", "学生", "写字"))
+        is_price = any(k in t for k in ("价", "钱", "贵", "便宜", "预算", "多花", "省"))
+        is_grip = any(k in text for k in ("手汗", "汗", "滑", "握", "笔杆", "脱手", "掐不住"))
+        is_compare = any(k in text for k in ("对比", "还是", "哪个", "晨光", "得力", "品牌"))
+        is_follow = any(k in text for k in ("刚才", "之前", "你刚", "接上", "上次", "那你"))
+        is_how = any(k in text for k in ("怎么选", "不会选", "懵", "不懂", "推荐"))
+
+        # 承接上一轮：用户明确指向对话历史
+        follow_lead = ""
+        if is_follow and history:
+            last_assistant = next((m.content for m in reversed(history) if m.role == "assistant"), "")
+            if last_assistant:
+                follow_lead = "接着您前面聊的，我把话说得更落地一点。\n\n"
+
+        # 首轮：建立信任，不把用户当成「搜错库」
+        if prior_user_rounds == 0:
+            lead = (
+                "可以，我在展台这边帮您把中性笔怎么选说清楚——先不纠结某一个型号，您按需套就行。\n\n"
+            )
+            if is_child:
+                lead = (
+                    "带孩子买笔的家长我见得多，我们先对齐三件事，再下手不晚。\n\n"
+                )
+            elif is_price:
+                lead = "谈预算很实在，我们先分清「标价」和「写得省不省心」这两件事。\n\n"
+            elif is_grip:
+                lead = "手汗多、笔杆滑这个我懂，优先从「握持」解决，比换牌子更有效。\n\n"
+            elif is_how:
+                lead = "很多人一进展台懵，很正常。您记三步就够了。\n\n"
+        else:
+            lead = follow_lead or "接着说，我尽量不重套路话。\n\n"
+
+        # 主体：按意图给结构化建议（可照做）
+        body_parts: list[str] = []
+
+        if is_child:
+            body_parts.append(
+                "• 小学作业：优先看书写顺滑、干得快蹭不蹭卷面，其次看孩子握笔是否省力。\n"
+                "• 现场让娃试写两行：笔画多的字也不刮纸，再决定。\n"
+                "• 粗细常见 0.5 / 0.7，作业密多用 0.5；想更稳可看略粗的。"
+            )
+        elif is_grip:
+            body_parts.append(
+                "• 优先找笔杆带磨砂/橡胶握位或三角矫正区的款式，比光面金属杆更不打滑。\n"
+                "• 可先套轻薄笔握套再试写 20 秒，看指腹会不会「蹭出油滑的滑」。\n"
+                "• 汗手若严重，随身小毛巾擦拇指食指也比硬换笔省钱。"
+            )
+        elif is_price:
+            body_parts.append(
+                "• 不必只看单价：写得顺手、少换芯、少作废作业，长期往往更省时间成本。\n"
+                "• 展台上可比「同一沓纸、同一力度」试写，比光看标价客观。\n"
+                "• 若预算有限，可先确定「顺滑+干速」底线，再谈品牌层级。"
+            )
+        elif is_compare:
+            body_parts.append(
+                "• 现场对比建议同一支笔连续画圈、划线、写名字，感受阻尼和飞白。\n"
+                "• 再看替芯是否好买——写顺手却买不到芯，后面更头疼。\n"
+                "• 国产入门与进口经典款各有定位，按您对「顺滑 vs 单价」权重选。"
+            )
+        elif is_how:
+            body_parts.append(
+                "① 先试写：顺滑、飞白、刮纸。\n"
+                "② 等几秒用手背轻蹭，看干速。\n"
+                "③ 最后看握感与替芯好不好买。三步里有两步满意，就可以入围。"
+            )
+        elif is_follow:
+            body_parts.append(
+                "您刚才同时关心价格与纸质表现的话，可以这样把握：先保证「不蹭卷面」的干速底线，\n"
+                "再在同一预算里比较顺滑。纸质偏薄时，干速有时比进口/国产标签更重要。"
+            )
+        else:
+            body_parts.append(
+                "• 中性笔核心就看：顺滑、干速、握感、替芯是否好买；四样里先满足您最在意的两样。\n"
+                "• 展台试写时别只划一下，写自己常写的字更有参考价值。\n"
+                "• 需要我帮您对着货架逐项筛，也可以直接说您的偏向。"
+            )
+
+        closing = (
+            "\n\n您下一步更想先解决「孩子用的顺滑」还是「预算封顶」？说一声我帮您收窄。"
+        )
+        if prior_user_rounds >= 2:
+            closing = "\n\n还有哪一点不放心，您直说，我按您的原话往下拆。"
+
+        return lead + "\n".join(body_parts) + closing
+
     @staticmethod
-    def _build_general_system_prompt() -> str:
+    def _pitch_core_bundle(product: Product) -> tuple[str, str, str]:
+        """浓缩卖点、竞品一句、搭配一句（无则空串）。"""
+        point_bits: list[str] = []
+        for sp in product.selling_points[:2]:
+            tx = sp.text
+            if "顺滑" in tx or "流畅" in tx:
+                point_bits.append("书写顺滑，长时间写也不容易累手")
+            elif "速干" in tx or "干" in tx:
+                point_bits.append("墨水相对易干，日常书写不容易蹭花")
+            elif "握" in tx or "舒适" in tx:
+                point_bits.append("握持区设计偏舒适")
+            else:
+                point_bits.append(tx)
+        main = "；".join(point_bits) if point_bits else (product.selling_points[0].text if product.selling_points else "口碑与品控都比较稳")
+
+        competitor_text = ""
+        if product.competitors:
+            c0 = product.competitors[0]
+            if c0.our_advantages:
+                competitor_text = (
+                    f"和{c0.name}比，我们更突出：{'、'.join(c0.our_advantages[:2])}。"
+                )
+
+        related_text = ""
+        if product.related_products:
+            r = product.related_products[:2]
+            if len(r) == 2:
+                related_text = f"不少客人会顺带带一盒{r[0].name}或{r[1].name}，凑齐全套更顺手。"
+            elif r:
+                related_text = f"也可以顺手看看{r[0].name}，一起试写对比。"
+
+        return main, competitor_text, related_text
+
+    @staticmethod
+    def _generate_sales_pitch(product: Product, message: str, history: list[ChatMessage] | None = None) -> str:
         """
-        构建通用对话的系统提示词
-        当无法识别具体商品时，以友善的通用助手身份回复
+        本地单品导购：必须「先接住问题」再介绍产品，避免复读同一段。
         """
-        return """你是一位友善的购物助手。虽然用户展示的商品不在你的商品库中，但你仍然可以：
+        import random
 
-【你的态度】
-1. **坦诚告知**：首先礼貌地说明这个商品不在当前库中
-2. **积极帮助**：表示愿意基于通用知识尽力帮助
-3. **专业建议**：根据用户的描述，给出合理的购物建议
-4. **引导探索**：如果有相关商品，可以引导用户了解
+        history = history or []
+        text = message.strip()
+        main, competitor_text, related_text = ChatService._pitch_core_bundle(product)
 
-【回答结构】
-- 开场：坦诚说明 + 表达帮助意愿
-- 主体：基于通用购物知识给出建议
-- 收尾：邀请用户继续提问或查看相关推荐
+        price_hint = f"展台标价参考大约 ¥{product.price:g}" if product.price else "具体价格以展台标签为准"
 
-【注意事项】
-- 不要编造具体的商品参数或价格
-- 可以分享通用的选购原则
-- 保持热情友善的语气
-- 如果完全不了解，诚实说明并询问更多信息"""
-    
+        # —— 意图路由 ——
+        if any(k in text for k in ("多久", "写不完", "能写", "寿命", "耗尽", "替芯", "笔芯", "换芯")):
+            return (
+                f"「能写多久」和握笔力度、纸张吃墨都有关，单看照片不好说死。{product.name}这类更适合日常中高频率书写。\n\n"
+                f"更实用的判断是看透明窗墨量和出墨是否发涩、断续——断续就该换芯了，别硬写到刮纸。\n\n"
+                f"{main}。\n{competitor_text}\n{related_text}\n\n"
+                f"需要的话我可以帮您对着实物看一眼墨量，估个使用节奏。"
+            ).replace("\n\n\n", "\n\n")
+
+        if any(k in text for k in ("值得", "多花", "性价比", "差别")) or any(
+            k in text for k in ("晨光", "得力", "国产", "便宜")
+        ):
+            opening = random.choice(
+                [
+                    "这笔钱花得值不值，要看您最吃「顺滑」还是「单价」。",
+                    "说实话，价差往往体现在出墨稳定性和长期使用手不累。",
+                ]
+            )
+            return (
+                f"{opening}\n\n"
+                f"{main}。\n{competitor_text or '您可以现场和常吃的入门款对比试写，看顺滑和飞白'}\n\n"
+                f"若您一天写很久，笔感省下来的时间，常比省几块钱更值得。\n{related_text}"
+            )
+
+        if any(k in text for k in ("刚才", "担心", "解决", "放心", "你说")):
+            return (
+                "我理解您想让我把话落到「您能不能放心」——我按您的担心往前推一步。\n\n"
+                f"{main}。{competitor_text}\n\n"
+                "若您最关心的是孩子写作业不蹭花、手感不累，这款在展台试写的反馈通常比较稳；\n"
+                f"仍犹豫的话，我们就用您最常用的写字方式试一下，比听我讲更准。\n{related_text}"
+            )
+
+        if any(k in text for k in ("老婆", "老公", "家属", "带回去", "怎么说", "一句", "总结", "交代")):
+            return (
+                "给您一句能直接带回去交代的话，可按家里人关心点微调：\n\n"
+                f"「展台试了这支{product.name}，孩子/我写着顺、干得快不容易蹭纸，{price_hint}。"
+                f"家里若更在意价格还是作业整洁，您可以针对性补一句。」\n\n"
+                f"若 TA 在意价格，就补「同价位里这笔主要是顺滑省心」；在意作业整洁就补「不蹭卷面」。\n{related_text}"
+            )
+
+        # 默认：点题 + 精华介绍（轮换开场）
+        pn = product.name
+        openings = [
+            f"您问到这款{pn}，我先把结论说前面：它是偏「日常长时间写也顺心」的定位。",
+            f"这支{pn}我自己也常给顾客试——核心就是写得顺、心里有底。",
+        ]
+        hook = random.choice(openings)
+        return (
+            f"{hook}\n\n{main}。\n{competitor_text}\n{related_text}\n\n"
+            f"您还想从「价格」「替芯」还是「和孩子作业」哪条再细问？我按那条展开。"
+        )
+
+    @staticmethod
+    def _build_general_system_prompt(summary: str | None = None) -> str:
+        """
+        构建通用对话的系统提示词（远程 LLM 用）
+        """
+        base = """你是线下展区里熟悉中性笔的购物参谋。用户未必对应到某一固定 SKU，你要仍能给可执行的选购指导。
+
+【态度】
+1. 少强调「不在库里」，多给现场能用的试写与筛选方法。
+2. 先对齐用户场景（孩子作业/办公/手汗/预算）再建议。
+3. 不编造具体库存与促销；参数以用户现场标签为准。
+
+【结构】
+- 先一句接住用户情绪或场景
+- 再给 2～4 条可照做的建议
+- 最后一句邀请用户说下一个顾虑点
+"""
+        if summary:
+            base += f"\n【此前对话摘要】\n{summary}\n回复时请承接上文，避免重复空话。"
+        return base
+
     def _answer_with_general_llm(
         self, 
         message: str, 
@@ -439,10 +528,9 @@ class ChatService:
             # 添加历史对话
             if history:
                 for msg in history[-6:]:
-                    messages.append({
-                        "role": "assistant" if msg.role == "ai" else msg.role,
-                        "content": msg.content
-                    })
+                    role = msg.role
+                    api_role = "assistant" if role in ("assistant", "ai") else "user"
+                    messages.append({"role": api_role, "content": msg.content})
             
             # 添加当前问题
             messages.append({
@@ -473,48 +561,3 @@ class ChatService:
                 return data["choices"][0]["message"]["content"]
         except Exception:
             return None
-    
-    @staticmethod
-    def _generate_general_response(message: str) -> str:
-        """
-        生成本地通用回复（当 LLM 不可用时使用）
-        """
-        import random
-        
-        # 常见购物咨询的通用回复模板
-        templates = [
-            "您好！这个商品确实不在我们当前的产品库中，但我可以从通用的角度帮您分析一下。",
-            "抱歉，我暂时还没收录这款商品，不过我很乐意基于购物经验给您一些建议。",
-            "这个商品我暂时不认识，但这不妨碍我帮您！让我想想...",
-        ]
-        
-        # 通用建议
-        advice_list = [
-            "选购这类商品，一般建议先看品牌口碑和用户评价。",
-            "如果预算允许，建议选择知名品牌，质量和售后更有保障。",
-            "这类商品建议关注材质和做工，细节决定使用体验。",
-            "购买前最好对比一下不同渠道的价格和服务。",
-        ]
-        
-        closing_list = [
-            "如果您有这款商品的更多信息，欢迎继续问我！",
-            "如果您对我们库中的其他商品感兴趣，也可以随时问我。",
-            "有什么其他问题，我随时在这里帮您！",
-        ]
-        
-        # 分析用户问题类型，给出相关建议
-        user_lower = message.lower()
-        advice = random.choice(advice_list)
-        
-        if "价" in user_lower or "钱" in user_lower or "贵" in user_lower or "便宜" in user_lower:
-            advice = "价格方面，建议多比较几个渠道，同时注意是否有促销活动。"
-        elif "好" in user_lower or "推荐" in user_lower or "怎样" in user_lower:
-            advice = "选购时建议优先考虑品牌的口碑和产品的实际评价。"
-        elif "用" in user_lower or "功能" in user_lower or "怎么" in user_lower:
-            advice = "具体使用方法建议查看产品说明书，或者询问销售人员。"
-        
-        return (
-            random.choice(templates) + "\n\n" +
-            advice + "\n\n" +
-            random.choice(closing_list)
-        )
