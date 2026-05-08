@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
 
 type RecognizeResult = {
   sku: string;
@@ -29,30 +29,16 @@ const cameraError = ref('');
 // 识别结果
 const result = ref<RecognizeResult | null>(null);
 const scanProgress = ref(0);
-const scanningText = ref('正在识别...');
-
-// AI思考状态文字
-const thinkingTexts = [
-  '正在分析图像...',
-  '提取产品特征...',
-  '检索知识库...',
-  '构建回复内容...',
-  '即将完成...'
-];
-const thinkingIndex = ref(0);
-let thinkingInterval: ReturnType<typeof setInterval> | null = null;
-
-// AI对话思考中
-const isAiThinking = ref(false);
+const scanAngle = ref(0); // 雷达扫描角度
 
 // 对话
-const messages = ref<Array<{type: 'user' | 'ai', text: string, audioUrl?: string}>>([]);
+const messages = ref<Array<{type: 'user' | 'ai', text: string}>>([]);
 const inputText = ref('');
 const isRecording = ref(false);
 const isAiSpeaking = ref(false);
+const isAiThinking = ref(false);
 
 // 语音合成
-let synth: SpeechSynthesis | null = null;
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 
 // 初始化相机
@@ -78,35 +64,17 @@ async function initCamera() {
   }
 }
 
-// 开始AI思考动画
-function startThinkingAnimation() {
-  thinkingIndex.value = 0;
-  if (thinkingInterval) clearInterval(thinkingInterval);
-  thinkingInterval = setInterval(() => {
-    thinkingIndex.value = (thinkingIndex.value + 1) % thinkingTexts.length;
-  }, 1500);
-}
-
-function stopThinkingAnimation() {
-  if (thinkingInterval) {
-    clearInterval(thinkingInterval);
-    thinkingInterval = null;
-  }
-}
-
 // 处理图片识别流程
 async function processImageRecognition(blob: Blob, filename: string) {
   // 进入扫描状态
   pageState.value = 'scanning';
-  startThinkingAnimation();
-  
-  // 扫描动画
   scanProgress.value = 0;
-  const progressInterval = setInterval(() => {
-    scanProgress.value += 1.5;
-    if (scanProgress.value >= 95) {
-      clearInterval(progressInterval);
-    }
+  scanAngle.value = 0;
+  
+  // 模拟雷达扫描动画
+  const scanInterval = setInterval(() => {
+    scanAngle.value = (scanAngle.value + 3) % 360;
+    scanProgress.value = Math.min(scanProgress.value + 1.5, 95);
   }, 50);
   
   try {
@@ -122,31 +90,19 @@ async function processImageRecognition(blob: Blob, filename: string) {
     if (!resp.ok) throw new Error('识别失败');
     
     result.value = await resp.json();
+    clearInterval(scanInterval);
     scanProgress.value = 100;
-    stopThinkingAnimation();
     
-    // 进入结果页
+    // 延迟后进入结果页（给用户看扫描完成的感觉）
     setTimeout(() => {
       pageState.value = 'result';
-      // AI自动开口
-      nextTick(() => {
-        const guideText = formatGuideText(result.value!);
-        speak(guideText, () => {
-          // 讲完后自动进入对话模式
-          setTimeout(() => {
-            pageState.value = 'chat';
-          }, 500);
-        });
-      });
+      messages.value = []; // 清空之前的对话
     }, 500);
     
   } catch (e) {
-    stopThinkingAnimation();
-    scanningText.value = '识别失败，请重试';
-    setTimeout(() => {
-      pageState.value = 'camera';
-      scanningText.value = '正在识别...';
-    }, 1500);
+    clearInterval(scanInterval);
+    alert('识别失败，请重试');
+    pageState.value = 'camera';
   }
 }
 
@@ -157,17 +113,14 @@ async function captureAndRecognize() {
   const video = videoRef.value;
   const canvas = canvasRef.value;
   
-  // 设置canvas尺寸
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   
-  // 绘制视频帧
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   
-  // 转换为blob
   const blob = await new Promise<Blob>((resolve) => {
     canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.9);
   });
@@ -187,26 +140,13 @@ async function handleFileSelect(event: Event) {
   if (!file) return;
   
   await processImageRecognition(file, file.name);
-  
-  // 清空input以便可以再次选择同一文件
   input.value = '';
-}
-
-// 格式化讲解文本
-function formatGuideText(data: RecognizeResult): string {
-  const segments = data.guide_segments;
-  let text = `这是${data.product.name}。`;
-  segments.forEach(seg => {
-    text += `${seg.title}，${seg.text}。`;
-  });
-  return text;
 }
 
 // 语音合成
 function speak(text: string, onEnd?: () => void) {
   if (!('speechSynthesis' in window)) return;
   
-  // 停止之前的
   window.speechSynthesis.cancel();
   
   const utterance = new SpeechSynthesisUtterance(text);
@@ -216,7 +156,7 @@ function speak(text: string, onEnd?: () => void) {
   
   // 尝试找中文女声
   const voices = window.speechSynthesis.getVoices();
-  const zhVoice = voices.find(v => v.lang.includes('zh') && v.name.includes('Female'));
+  const zhVoice = voices.find(v => v.lang.includes('zh'));
   if (zhVoice) utterance.voice = zhVoice;
   
   isAiSpeaking.value = true;
@@ -242,6 +182,57 @@ function stopSpeaking() {
   }
 }
 
+// 生成AI解读内容
+async function startAiExplanation() {
+  if (!result.value) return;
+  
+  // 切换到对话模式
+  pageState.value = 'chat';
+  
+  // 先显示AI正在思考
+  isAiThinking.value = true;
+  
+  // 构建解读请求
+  try {
+    const resp = await fetch('/api/v1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sku: result.value.sku,
+        message: '请为我详细介绍一下这款产品'
+      })
+    });
+    
+    if (!resp.ok) throw new Error('请求失败');
+    
+    const data = await resp.json();
+    isAiThinking.value = false;
+    
+    // 添加AI回复到对话
+    messages.value.push({ type: 'ai', text: data.answer });
+    
+    // 语音播报
+    speak(data.answer);
+    
+  } catch (e) {
+    isAiThinking.value = false;
+    // 使用本地讲解作为fallback
+    const fallbackText = generateLocalGuide(result.value);
+    messages.value.push({ type: 'ai', text: fallbackText });
+    speak(fallbackText);
+  }
+}
+
+// 生成本地讲解（fallback）
+function generateLocalGuide(result: RecognizeResult): string {
+  const segments = result.guide_segments;
+  let text = `这是${result.product.name}。`;
+  segments.forEach(seg => {
+    text += `${seg.title}，${seg.text}。`;
+  });
+  return text;
+}
+
 // 发送消息
 async function sendMessage() {
   if (!inputText.value.trim() || !result.value) return;
@@ -250,28 +241,34 @@ async function sendMessage() {
   messages.value.push({ type: 'user', text: userText });
   inputText.value = '';
   
+  // 显示AI思考中
+  isAiThinking.value = true;
+  
   try {
     const resp = await fetch('/api/v1/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        sku: result.value.sku, 
-        message: userText 
-      }),
+      body: JSON.stringify({
+        sku: result.value.sku,
+        message: userText
+      })
     });
     
     if (!resp.ok) throw new Error('请求失败');
     
     const data = await resp.json();
+    isAiThinking.value = false;
+    
     messages.value.push({ type: 'ai', text: data.answer });
     
-    // AI语音回复
+    // 语音播报回复
     speak(data.answer);
     
   } catch (e) {
-    messages.value.push({ 
-      type: 'ai', 
-      text: '抱歉，我没听清楚，能再说一遍吗？' 
+    isAiThinking.value = false;
+    messages.value.push({
+      type: 'ai',
+      text: '抱歉，我有点走神了，能再说一遍吗？'
     });
   }
 }
@@ -294,10 +291,10 @@ async function startVoiceInput() {
       const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
       audioStream.getTracks().forEach(t => t.stop());
       
-      // TODO: 发送语音识别（简化版先用文字）
-      messages.value.push({ 
-        type: 'user', 
-        text: '🎤 [语音输入]' 
+      // 语音输入暂不支持，显示提示
+      messages.value.push({
+        type: 'user',
+        text: '🎤 [语音输入暂不支持，请使用文字]'
       });
     };
     
@@ -329,7 +326,6 @@ function restart() {
 onMounted(() => {
   initCamera();
   
-  // 预加载语音
   if ('speechSynthesis' in window) {
     window.speechSynthesis.getVoices();
   }
@@ -347,53 +343,37 @@ onUnmounted(() => {
   <div class="app">
     <!-- 相机页面 -->
     <div v-if="pageState === 'camera'" class="camera-page">
-      <!-- 视频流 -->
-      <video 
-        ref="videoRef" 
-        autoplay 
-        playsinline
-        muted
-        class="camera-feed"
-      />
+      <video ref="videoRef" autoplay playsinline muted class="camera-feed" />
       
-      <!-- 扫描框 -->
-      <div class="scan-overlay">
-        <div class="scan-frame">
-          <div class="corner tl"></div>
-          <div class="corner tr"></div>
-          <div class="corner bl"></div>
-          <div class="corner br"></div>
-          <div class="scan-line"></div>
+      <!-- 雷达扫描框 -->
+      <div class="radar-overlay">
+        <div class="radar-frame">
+          <div class="radar-circle outer"></div>
+          <div class="radar-circle middle"></div>
+          <div class="radar-circle inner"></div>
+          <div class="radar-sweep" :style="{ transform: `rotate(${scanAngle}deg)` }"></div>
+          <div class="radar-center">
+            <span class="radar-icon">📡</span>
+          </div>
         </div>
-        <p class="scan-hint">对准产品，自动识别</p>
+        <p class="radar-hint">对准产品，自动识别</p>
       </div>
       
-      <!-- 错误提示 -->
       <div v-if="cameraError" class="camera-error">
         <p>{{ cameraError }}</p>
         <button @click="initCamera">重试</button>
       </div>
       
-      <!-- 底部按钮 -->
       <div class="camera-controls">
         <div class="controls-row">
-          <!-- 拍照按钮 -->
-          <button 
-            class="capture-btn"
-            @click="captureAndRecognize"
-            :disabled="!isCameraReady"
-          >
+          <button class="capture-btn" @click="captureAndRecognize" :disabled="!isCameraReady">
             <div class="btn-outer">
               <div class="btn-inner"></div>
             </div>
             <span class="btn-label">拍照</span>
           </button>
           
-          <!-- 相册按钮 -->
-          <button 
-            class="gallery-btn"
-            @click="openGallery"
-          >
+          <button class="gallery-btn" @click="openGallery">
             <div class="gallery-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -407,212 +387,138 @@ onUnmounted(() => {
         <p class="btn-hint">拍照或从相册选择图片</p>
       </div>
       
-      <!-- 隐藏的画布 -->
       <canvas ref="canvasRef" style="display: none;" />
-      
-      <!-- 隐藏的文件选择input -->
-      <input
-        ref="fileInputRef"
-        type="file"
-        accept="image/*"
-        style="display: none"
-        @change="handleFileSelect"
-      />
+      <input ref="fileInputRef" type="file" accept="image/*" style="display: none" @change="handleFileSelect" />
     </div>
     
-    <!-- 扫描中 / AI思考中 -->
+    <!-- 扫描中 -->
     <div v-if="pageState === 'scanning'" class="scanning-page">
-      <div class="ai-brain">
-        <!-- 中央大脑核心 -->
-        <div class="brain-core">
-          <div class="core-pulse"></div>
-          <div class="core-inner"></div>
-          <div class="core-glow"></div>
+      <div class="real-radar">
+        <!-- 真实雷达效果 -->
+        <div class="radar-screen">
+          <div class="radar-grid"></div>
+          <div class="radar-sweep-line" :style="{ transform: `rotate(${scanAngle}deg)` }"></div>
+          <div class="radar-blip" :class="{ active: scanProgress > 50 }"></div>
         </div>
-        
-        <!-- 环绕的轨道环 -->
-        <div class="orbit-ring ring-1">
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-        </div>
-        <div class="orbit-ring ring-2">
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-        </div>
-        <div class="orbit-ring ring-3">
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-          <div class="orbit-particle"></div>
-        </div>
-        
-        <!-- 雷达扫描线 -->
-        <div class="radar-scan"></div>
-        <div class="radar-grid"></div>
-        
-        <!-- 数据流粒子 -->
-        <div class="data-particles">
-          <span v-for="i in 20" :key="i" class="particle" :style="{
-            left: Math.random() * 100 + '%',
-            animationDelay: Math.random() * 2 + 's',
-            animationDuration: (1 + Math.random() * 2) + 's'
-          }"></span>
-        </div>
-        
-        <!-- 思考状态文字 -->
-        <div class="thinking-status">
-          <p class="thinking-line">{{ thinkingTexts[thinkingIndex] }}</p>
-          <div class="thinking-dots">
-            <span></span>
-            <span></span>
-            <span></span>
+        <div class="scan-info">
+          <p class="scan-title">正在扫描分析...</p>
+          <div class="scan-progress-bar">
+            <div class="scan-progress-fill" :style="{ width: scanProgress + '%' }"></div>
           </div>
-        </div>
-        
-        <!-- 进度环 -->
-        <div class="progress-ring">
-          <svg viewBox="0 0 100 100">
-            <defs>
-              <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
-                <stop offset="50%" style="stop-color:#8b5cf6;stop-opacity:1" />
-                <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
-              </linearGradient>
-            </defs>
-            <circle 
-              class="progress-bg" 
-              cx="50" cy="50" r="45"
-            />
-            <circle 
-              class="progress-fill" 
-              cx="50" cy="50" r="45"
-              :style="{ strokeDashoffset: 283 - (283 * scanProgress / 100) }"
-            />
-          </svg>
-          <span class="progress-text">{{ Math.round(scanProgress) }}%</span>
-        </div>
-        
-        <!-- 底部状态信息 -->
-        <div class="status-info">
-          <div class="status-item" :class="{ active: scanProgress > 20 }">
-            <span class="icon">📡</span>
-            <span>图像接收</span>
-          </div>
-          <div class="status-item" :class="{ active: scanProgress > 40 }">
-            <span class="icon">🔍</span>
-            <span>特征提取</span>
-          </div>
-          <div class="status-item" :class="{ active: scanProgress > 60 }">
-            <span class="icon">🧠</span>
-            <span>模型推理</span>
-          </div>
-          <div class="status-item" :class="{ active: scanProgress > 80 }">
-            <span class="icon">💡</span>
-            <span>生成回复</span>
-          </div>
+          <p class="scan-percent">{{ Math.round(scanProgress) }}%</p>
         </div>
       </div>
     </div>
     
-    <!-- 结果/对话页面 -->
-    <div v-if="pageState === 'result' || pageState === 'chat'" class="result-page">
-      <!-- 顶部产品信息 -->
-      <div class="product-header">
-        <img 
-          :src="result?.product.primary_image" 
-          :alt="result?.product.name"
-          class="product-image"
-        />
+    <!-- 结果页面 -->
+    <div v-if="pageState === 'result'" class="result-page">
+      <div class="result-header">
+        <img :src="result?.product.primary_image" :alt="result?.product.name" class="product-image" />
         <div class="product-info">
           <h1>{{ result?.product.name }}</h1>
-          <p class="price" v-if="result?.product.price">
-            ¥{{ result.product.price }}
-          </p>
+          <p class="price" v-if="result?.product.price">¥{{ result.product.price }}</p>
           <div class="badges">
             <span class="badge">{{ result?.sku }}</span>
-            <span class="badge confidence">
-              置信度 {{ (result?.confidence || 0 * 100).toFixed(0) }}%
-            </span>
+            <span class="badge confidence">置信度 {{ (result?.confidence || 0 * 100).toFixed(0) }}%</span>
           </div>
         </div>
       </div>
       
-      <!-- AI说话动画 -->
-      <div v-if="isAiSpeaking" class="ai-speaking-indicator" @click="stopSpeaking">
-        <div class="sound-waves">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <p>AI 正在讲解，点击打断</p>
+      <!-- 关键交互按钮 -->
+      <div class="guide-action-section">
+        <p class="guide-hint">已识别产品，需要详细解读吗？</p>
+        <button class="guide-btn" @click="startAiExplanation" :disabled="isAiThinking">
+          <span class="btn-icon">🎯</span>
+          <span class="btn-text">需要帮我解读一下吗？</span>
+        </button>
       </div>
       
-      <!-- 讲解内容（简洁版） -->
-      <div v-if="pageState === 'result'" class="guide-content">
-        <div 
-          v-for="(seg, idx) in result?.guide_segments" 
-          :key="idx"
-          class="guide-card"
-          :style="{ animationDelay: idx * 0.1 + 's' }"
-        >
-          <h3>{{ seg.title }}</h3>
-          <p>{{ seg.text }}</p>
+      <!-- 产品卖点预览 -->
+      <div class="guide-preview">
+        <div v-for="(seg, idx) in result?.guide_segments.slice(0, 2)" :key="idx" class="preview-card">
+          <h4>{{ seg.title }}</h4>
+          <p>{{ seg.text.substring(0, 50) }}...</p>
         </div>
+      </div>
+      
+      <button class="restart-btn" @click="restart">
+        📷 识别其他产品
+      </button>
+    </div>
+    
+    <!-- 对话页面 -->
+    <div v-if="pageState === 'chat'" class="chat-page">
+      <!-- 产品信息条 -->
+      <div class="chat-header">
+        <img :src="result?.product.primary_image" class="chat-product-thumb" />
+        <span class="chat-product-name">{{ result?.product.name }}</span>
+        <button class="back-to-result" @click="pageState = 'result'">返回</button>
       </div>
       
       <!-- 对话区域 -->
-      <div v-if="pageState === 'chat'" class="chat-area">
-        <div class="messages">
-          <div 
-            v-for="(msg, idx) in messages" 
-            :key="idx"
-            :class="['message', msg.type]"
-          >
-            <div class="bubble">
-              <p>{{ msg.text }}</p>
-            </div>
+      <div class="chat-area">
+        <!-- 初始引导 -->
+        <div v-if="messages.length === 0" class="chat-welcome">
+          <p>👋 我是您的AI导购，请问有什么可以帮您的？</p>
+          <p class="hint">例如："这款笔适合学生用吗？"、"和得力的比哪个好？"</p>
+        </div>
+        
+        <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.type]">
+          <div class="bubble">
+            <p>{{ msg.text }}</p>
           </div>
-          <div v-if="isAiSpeaking" class="message ai typing">
-            <div class="bubble">
+        </div>
+        
+        <!-- AI思考中 -->
+        <div v-if="isAiThinking" class="message ai thinking">
+          <div class="bubble">
+            <div class="thinking-animation">
               <span class="dot"></span>
               <span class="dot"></span>
               <span class="dot"></span>
             </div>
+            <span class="thinking-text">AI思考中...</span>
           </div>
+        </div>
+        
+        <!-- AI说话中 -->
+        <div v-if="isAiSpeaking" class="ai-speaking-bar" @click="stopSpeaking">
+          <div class="sound-waves">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <span>点击打断</span>
         </div>
       </div>
       
-      <!-- 底部输入区 -->
-      <div class="input-area">
-        <div class="input-container">
+      <!-- 输入区 -->
+      <div class="chat-input-area">
+        <div class="input-wrapper">
           <input
             v-model="inputText"
-            placeholder="问我关于这个产品的问题..."
+            placeholder="输入您的问题..."
             @keyup.enter="sendMessage"
           />
           <button 
-            class="voice-btn"
+            class="voice-btn-small"
             @mousedown="startVoiceInput"
             @mouseup="stopVoiceInput"
-            @touchstart.prevent="startVoiceInput"
-            @touchend.prevent="stopVoiceInput"
             :class="{ recording: isRecording }"
           >
-            <span v-if="!isRecording">🎤</span>
-            <span v-else>⏹️</span>
+            🎤
           </button>
           <button 
             class="send-btn"
             @click="sendMessage"
-            :disabled="!inputText.trim()"
+            :disabled="!inputText.trim() || isAiThinking"
           >
             发送
           </button>
         </div>
-        <button class="restart-btn" @click="restart">
+        <button class="restart-btn-small" @click="restart">
           📷 识别其他产品
         </button>
       </div>
@@ -650,8 +556,8 @@ onUnmounted(() => {
   object-fit: cover;
 }
 
-/* 扫描框 */
-.scan-overlay {
+/* 雷达扫描框 - 飞机雷达风格 */
+.radar-overlay {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -662,73 +568,91 @@ onUnmounted(() => {
   gap: 20px;
 }
 
-.scan-frame {
-  width: 280px;
-  height: 280px;
+.radar-frame {
+  width: 260px;
+  height: 260px;
   position: relative;
 }
 
-.corner {
+.radar-circle {
   position: absolute;
-  width: 40px;
-  height: 40px;
-  border: 4px solid #3b82f6;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 130, 246, 0.5);
 }
 
-.corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
-.corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
-.corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
-.corner.br { bottom: 0; right: 0; border-left: none; border-top: none; }
-
-.scan-line {
-  position: absolute;
+.radar-circle.outer {
+  width: 100%;
+  height: 100%;
   top: 0;
   left: 0;
-  right: 0;
+  animation: radarPulse 2s ease-out infinite;
+}
+
+.radar-circle.middle {
+  width: 66%;
+  height: 66%;
+  top: 17%;
+  left: 17%;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.radar-circle.inner {
+  width: 33%;
+  height: 33%;
+  top: 33.5%;
+  left: 33.5%;
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+@keyframes radarPulse {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.1); opacity: 0; }
+}
+
+/* 雷达扫描线 - 旋转效果 */
+.radar-sweep {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #3b82f6, transparent);
-  animation: scan 2s linear infinite;
+  background: linear-gradient(90deg, transparent, #3b82f6, #60a5fa);
+  transform-origin: 0 50%;
   box-shadow: 0 0 10px #3b82f6;
+  animation: radarRotate 3s linear infinite;
 }
 
-@keyframes scan {
-  0% { top: 0; opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { top: 100%; opacity: 0; }
+@keyframes radarRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.scan-hint {
+.radar-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-icon {
+  font-size: 12px;
+}
+
+.radar-hint {
   color: rgba(255,255,255,0.9);
   font-size: 15px;
   text-shadow: 0 2px 4px rgba(0,0,0,0.5);
   letter-spacing: 1px;
 }
 
-/* 错误提示 */
-.camera-error {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  color: white;
-  background: rgba(0,0,0,0.8);
-  padding: 30px;
-  border-radius: 16px;
-}
-
-.camera-error button {
-  margin-top: 15px;
-  padding: 10px 30px;
-  background: #3b82f6;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-}
-
-/* 底部控制区 */
+/* 底部控制 */
 .camera-controls {
   position: absolute;
   bottom: 40px;
@@ -746,11 +670,10 @@ onUnmounted(() => {
   gap: 40px;
 }
 
-.capture-btn {
+.capture-btn, .gallery-btn {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -758,67 +681,41 @@ onUnmounted(() => {
 }
 
 .btn-outer {
-  width: 80px;
-  height: 80px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.25);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.1s;
-}
-
-.capture-btn:active .btn-outer {
-  transform: scale(0.95);
 }
 
 .btn-inner {
-  width: 65px;
-  height: 65px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: white;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-}
-
-.gallery-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
 }
 
 .gallery-icon {
-  width: 60px;
-  height: 60px;
-  border-radius: 16px;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
   background: rgba(255,255,255,0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  border: 2px solid rgba(255,255,255,0.3);
 }
 
 .gallery-icon svg {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   color: white;
-}
-
-.gallery-btn:active .gallery-icon {
-  transform: scale(0.95);
-  background: rgba(255,255,255,0.3);
 }
 
 .btn-label {
   color: white;
   font-size: 12px;
-  font-weight: 500;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .btn-hint {
@@ -826,89 +723,123 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-/* ===== 扫描中页面 ===== */
+/* ===== 扫描中页面 - 真实雷达效果 ===== */
 .scanning-page {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  background: linear-gradient(180deg, #0a0f1a 0%, #0f172a 100%);
 }
 
-.scanning-animation {
+.real-radar {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 30px;
+  gap: 40px;
 }
 
-.spinner {
-  position: relative;
-  width: 100px;
-  height: 100px;
-}
-
-.ring {
-  position: absolute;
-  border: 3px solid transparent;
-  border-top-color: #3b82f6;
+.radar-screen {
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
-  animation: spin 1.5s linear infinite;
+  background: radial-gradient(circle, rgba(16, 42, 67, 0.9) 0%, rgba(10, 15, 26, 1) 100%);
+  position: relative;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  overflow: hidden;
 }
 
-.ring:nth-child(1) {
-  width: 100%;
-  height: 100%;
+.radar-grid {
+  position: absolute;
   top: 0;
   left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    repeating-radial-gradient(circle at center, transparent 0, transparent 30px, rgba(59, 130, 246, 0.1) 31px);
 }
 
-.ring:nth-child(2) {
-  width: 70%;
-  height: 70%;
-  top: 15%;
-  left: 15%;
-  animation-direction: reverse;
-  animation-duration: 1.2s;
-  border-top-color: #60a5fa;
+.radar-grid::before,
+.radar-grid::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(59, 130, 246, 0.2);
 }
 
-.ring:nth-child(3) {
-  width: 40%;
-  height: 40%;
+.radar-grid::after {
+  transform: rotate(90deg);
+}
+
+.radar-sweep-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #3b82f6);
+  transform-origin: 0 50%;
+  box-shadow: 0 0 8px #3b82f6;
+}
+
+.radar-blip {
+  position: absolute;
   top: 30%;
-  left: 30%;
-  animation-duration: 0.8s;
-  border-top-color: #93c5fd;
+  right: 30%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  opacity: 0;
+  transition: opacity 0.3s;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.radar-blip.active {
+  opacity: 1;
+  animation: blipPulse 1s ease-out infinite;
 }
 
-.progress-bar {
-  width: 200px;
+@keyframes blipPulse {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.scan-info {
+  text-align: center;
+}
+
+.scan-title {
+  color: #93c5fd;
+  font-size: 18px;
+  margin-bottom: 16px;
+}
+
+.scan-progress-bar {
+  width: 250px;
   height: 4px;
-  background: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.1);
   border-radius: 2px;
   overflow: hidden;
 }
 
-.progress-fill {
+.scan-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #3b82f6, #60a5fa);
-  border-radius: 2px;
-  transition: width 0.3s;
+  transition: width 0.1s;
 }
 
-.scanning-text {
-  color: white;
-  font-size: 16px;
-  letter-spacing: 2px;
+.scan-percent {
+  color: #60a5fa;
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 16px;
 }
 
-/* ===== 结果/对话页面 ===== */
+/* ===== 结果页面 ===== */
 .result-page {
   width: 100%;
   height: 100%;
@@ -916,15 +847,17 @@ onUnmounted(() => {
   flex-direction: column;
   background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
   color: white;
+  padding: 20px;
+  overflow-y: auto;
 }
 
-/* 产品头部 */
-.product-header {
+.result-header {
   display: flex;
   gap: 15px;
-  padding: 20px;
+  padding: 15px;
   background: rgba(255,255,255,0.05);
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
+  margin-bottom: 20px;
 }
 
 .product-image {
@@ -936,31 +869,21 @@ onUnmounted(() => {
   padding: 10px;
 }
 
-.product-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
 .product-info h1 {
   font-size: 20px;
-  font-weight: 600;
   margin-bottom: 8px;
-  color: white;
 }
 
 .price {
   font-size: 24px;
   color: #fbbf24;
   font-weight: 700;
-  margin-bottom: 8px;
 }
 
 .badges {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 .badge {
@@ -968,110 +891,157 @@ onUnmounted(() => {
   background: rgba(59, 130, 246, 0.3);
   border-radius: 20px;
   font-size: 12px;
-  color: #93c5fd;
 }
 
-.badge.confidence {
-  background: rgba(34, 197, 94, 0.3);
-  color: #86efac;
+/* 关键交互区域 */
+.guide-action-section {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.2));
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 20px;
+  padding: 24px;
+  text-align: center;
+  margin-bottom: 20px;
 }
 
-/* AI说话指示器 */
-.ai-speaking-indicator {
-  padding: 15px 20px;
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.2), transparent);
-  border-left: 3px solid #3b82f6;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  cursor: pointer;
-}
-
-.sound-waves {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 24px;
-}
-
-.sound-waves span {
-  width: 4px;
-  background: #3b82f6;
-  border-radius: 2px;
-  animation: wave 0.5s ease-in-out infinite;
-}
-
-.sound-waves span:nth-child(1) { height: 8px; animation-delay: 0s; }
-.sound-waves span:nth-child(2) { height: 16px; animation-delay: 0.1s; }
-.sound-waves span:nth-child(3) { height: 24px; animation-delay: 0.2s; }
-.sound-waves span:nth-child(4) { height: 16px; animation-delay: 0.3s; }
-.sound-waves span:nth-child(5) { height: 8px; animation-delay: 0.4s; }
-
-@keyframes wave {
-  0%, 100% { transform: scaleY(0.5); }
-  50% { transform: scaleY(1); }
-}
-
-.ai-speaking-indicator p {
-  color: #93c5fd;
+.guide-hint {
+  color: rgba(255,255,255,0.7);
   font-size: 14px;
+  margin-bottom: 16px;
 }
 
-/* 讲解内容 */
-.guide-content {
+.guide-btn {
+  width: 100%;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
+  border-radius: 16px;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.2s;
+}
+
+.guide-btn:active {
+  transform: scale(0.98);
+}
+
+.guide-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  font-size: 20px;
+}
+
+/* 卖点预览 */
+.guide-preview {
   flex: 1;
-  overflow-y: auto;
-  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin-bottom: 20px;
 }
 
-.guide-card {
+.preview-card {
   background: rgba(255,255,255,0.08);
-  border-radius: 16px;
-  padding: 20px;
-  border: 1px solid rgba(255,255,255,0.1);
-  animation: slideIn 0.4s ease-out forwards;
-  opacity: 0;
-  transform: translateY(20px);
+  border-radius: 12px;
+  padding: 16px;
 }
 
-@keyframes slideIn {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.guide-card h3 {
-  font-size: 16px;
+.preview-card h4 {
   color: #60a5fa;
+  font-size: 15px;
   margin-bottom: 8px;
-  font-weight: 600;
 }
 
-.guide-card p {
+.preview-card p {
+  color: rgba(255,255,255,0.7);
+  font-size: 14px;
+}
+
+.restart-btn {
+  width: 100%;
+  padding: 14px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 12px;
+  color: rgba(255,255,255,0.8);
   font-size: 15px;
-  line-height: 1.6;
-  color: rgba(255,255,255,0.9);
+  cursor: pointer;
+}
+
+/* ===== 对话页面 ===== */
+.chat-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: white;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.chat-product-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: white;
+  padding: 4px;
+}
+
+.chat-product-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.back-to-result {
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 /* 对话区域 */
 .chat-area {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 16px;
 }
 
-.messages {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
+.chat-welcome {
+  text-align: center;
+  padding: 40px 20px;
+  color: rgba(255,255,255,0.6);
+}
+
+.chat-welcome .hint {
+  font-size: 13px;
+  margin-top: 12px;
+  color: rgba(255,255,255,0.4);
 }
 
 .message {
   display: flex;
+  margin-bottom: 16px;
 }
 
 .message.user {
@@ -1102,44 +1072,95 @@ onUnmounted(() => {
   border-bottom-left-radius: 4px;
 }
 
-.message.ai.typing .bubble {
+.message.thinking .bubble {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.thinking-animation {
+  display: flex;
   gap: 4px;
-  padding: 16px 20px;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  background: #93c5fd;
+.thinking-animation .dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  animation: bounce 1.4s infinite;
+  background: #93c5fd;
+  animation: thinkingBounce 1.4s infinite;
 }
 
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
+.thinking-animation .dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-animation .dot:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes bounce {
+@keyframes thinkingBounce {
   0%, 60%, 100% { transform: translateY(0); }
-  30% { transform: translateY(-8px); }
+  30% { transform: translateY(-6px); }
+}
+
+.thinking-text {
+  font-size: 13px;
+  color: #93c5fd;
+}
+
+/* AI说话条 */
+.ai-speaking-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(59, 130, 246, 0.2);
+  border-radius: 12px;
+  margin: 12px 16px;
+  cursor: pointer;
+}
+
+.sound-waves {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+}
+
+.sound-waves span {
+  width: 3px;
+  background: #3b82f6;
+  border-radius: 2px;
+  animation: soundWave 0.5s ease-in-out infinite;
+}
+
+.sound-waves span:nth-child(1) { height: 8px; animation-delay: 0s; }
+.sound-waves span:nth-child(2) { height: 14px; animation-delay: 0.1s; }
+.sound-waves span:nth-child(3) { height: 20px; animation-delay: 0.2s; }
+.sound-waves span:nth-child(4) { height: 14px; animation-delay: 0.3s; }
+.sound-waves span:nth-child(5) { height: 8px; animation-delay: 0.4s; }
+
+@keyframes soundWave {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+.ai-speaking-bar span {
+  font-size: 13px;
+  color: #93c5fd;
 }
 
 /* 输入区 */
-.input-area {
-  padding: 15px 20px 25px;
+.chat-input-area {
+  padding: 12px 16px 20px;
   background: rgba(0,0,0,0.3);
   border-top: 1px solid rgba(255,255,255,0.1);
 }
 
-.input-container {
+.input-wrapper {
   display: flex;
-  gap: 10px;
-  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
-.input-container input {
+.input-wrapper input {
   flex: 1;
   padding: 12px 16px;
   border: none;
@@ -1147,36 +1168,25 @@ onUnmounted(() => {
   background: rgba(255,255,255,0.1);
   color: white;
   font-size: 15px;
-  outline: none;
 }
 
-.input-container input::placeholder {
+.input-wrapper input::placeholder {
   color: rgba(255,255,255,0.5);
 }
 
-.voice-btn {
+.voice-btn-small {
   width: 44px;
   height: 44px;
   border-radius: 50%;
   border: none;
   background: rgba(255,255,255,0.1);
   color: white;
-  font-size: 20px;
+  font-size: 18px;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
 }
 
-.voice-btn.recording {
+.voice-btn-small.recording {
   background: #ef4444;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
 }
 
 .send-btn {
@@ -1185,10 +1195,8 @@ onUnmounted(() => {
   border-radius: 24px;
   background: #3b82f6;
   color: white;
-  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
 .send-btn:disabled {
@@ -1196,19 +1204,38 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.restart-btn {
+.restart-btn-small {
   width: 100%;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid rgba(255,255,255,0.2);
   border-radius: 12px;
   background: transparent;
   color: rgba(255,255,255,0.7);
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
-.restart-btn:hover {
-  background: rgba(255,255,255,0.1);
+/* 错误提示 */
+.camera-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: white;
+  background: rgba(0,0,0,0.8);
+  padding: 30px;
+  border-radius: 16px;
+}
+
+.camera-error button {
+  margin-top: 15px;
+  padding: 10px 30px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  cursor: pointer;
 }
 </style>

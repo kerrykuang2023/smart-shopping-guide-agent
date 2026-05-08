@@ -26,11 +26,97 @@
 - **互动问答**：顾客追问，AI 实时回答
 - **关联推荐**：图片化的搭配套餐、优惠组合
 - **竞品对比**：双产品图文对照
+- **语音交互**：按住说话，AI 语音回复
 - **完全离线**：部署在边缘端（FusionXpark/DGX Spark），数据不出店
 
-## 演示流程一览
+## 快速开始
 
-> 完整演示脚本见 [`docs/prd.md`](docs/prd.md#12-演示流程设计)
+### 方式一：Docker 一键部署（推荐）
+
+**环境要求**：Docker + Docker Compose
+
+```bash
+# 克隆项目
+git clone https://github.com/kerrykuang2023/smart-shopping-guide-agent.git
+cd smart-shopping-guide-agent
+
+# 启动服务（开发模式，使用 Mock 数据）
+docker compose -f deployment/docker/docker-compose.yml up -d
+
+# 或使用便捷脚本
+./scripts/start.sh
+```
+
+**部署后访问**：
+- **服务端 Console**: http://localhost:8080/
+- **移动端 H5**: http://localhost:8080/m（手机扫码访问）
+
+### 方式二：本地开发环境
+
+**后端服务（Python）**
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+**前端 Console（Vue3）**
+
+```bash
+cd frontend-console
+npm install
+npm run dev
+# 访问 http://localhost:5173
+```
+
+**前端 H5（Vue3）**
+
+```bash
+cd frontend-h5
+npm install
+npm run dev
+# 访问 http://localhost:5174
+```
+
+## 如何使用
+
+### 第一步：访问管理后台
+
+浏览器打开 `http://<服务器IP>:8080/`
+
+- 查看产品列表和状态
+- 配置外部 AI 模型（VLM/LLM/TTS/ASR）
+- 生成移动端二维码
+
+### 第二步：手机扫码体验
+
+1. 点击"移动端入口"查看二维码
+2. 用手机扫码进入 H5 页面
+3. **拍照识别**：对准产品点击大圆按钮
+4. **或选择相册**：点击相册图标从手机选图
+
+### 第三步：与 AI 互动
+
+- **自动讲解**：识别后 AI 自动语音播报产品卖点
+- **语音追问**：按住麦克风按钮说话提问
+- **文字追问**：输入框输入问题
+- **关联推荐**：查看搭配产品和竞品对比
+
+### 离线语音（可选）
+
+如需使用本地语音识别和合成（无需网络）：
+
+```bash
+# 进入容器下载语音模型
+docker exec -it smart-guide-agent bash
+python scripts/download_sherpa_models.py --all
+
+# 退出并重启
+docker restart smart-guide-agent
+```
+
+## 演示流程
 
 ```
 1. 演示者打开笔记本浏览器 → http://server:8080
@@ -41,6 +127,8 @@
 6. 手机展示富图片产品卡片 + 关联推荐 + 竞品对比
 7. 顾客追问 → AI 流式回答
 ```
+
+完整演示脚本见 [`docs/prd.md`](docs/prd.md#12-演示流程设计)
 
 ## 技术架构
 
@@ -62,8 +150,8 @@
 │  │  └── /images 产品图片                │ │
 │  └────────────────────────────────────┘ │
 │  ┌────────┐ ┌────────┐ ┌────────────┐  │
-│  │Qwen-VL │ │Qdrant  │ │Knowledge   │  │
-│  │(视觉+) │ │(向量)  │ │YAML+Images │  │
+│  │Qwen-VL │ │Sherpa  │ │Knowledge   │  │
+│  │(视觉+) │ │(语音)  │ │YAML+Images │  │
 │  └────────┘ └────────┘ └────────────┘  │
 └─────────────────────────────────────────┘
 ```
@@ -74,19 +162,20 @@
 
 ```
 smart-shopping-guide-agent/
-├── backend/              # FastAPI 后端服务（部署在 GB10）
-├── frontend-console/     # 服务端 Console（演示者用，桌面 UI）
-├── frontend-h5/          # 移动端 H5（顾客用，移动 UI）
-├── frontend-app/         # Flutter 原生 App（Phase 2）
+├── backend/              # FastAPI 后端服务
+│   ├── app/              #   应用代码
+│   ├── static/           #   静态文件
+│   └── tests/            #   测试文件
+├── frontend-console/     # 服务端 Console（Vue3）
+├── frontend-h5/          # 移动端 H5（Vue3）
 ├── knowledge/            # 产品知识库
 │   ├── products/         #   YAML 产品数据
-│   ├── images/           #   产品图片库
-│   └── schema.yaml       #   Schema 定义
-├── deployment/           # 部署配置（1Panel/Docker/Helm）
+│   └── images/           #   产品图片库
+├── deployment/           # 部署配置（Docker）
+├── scripts/              # 辅助脚本
 └── docs/                 # 设计文档
-    ├── prd.md            #   产品需求文档（PRD）
-    ├── architecture.md   #   架构设计
-    └── roadmap.md        #   路线图
+    ├── prd.md            #   产品需求文档
+    └── architecture.md   #   架构设计
 ```
 
 ## 文档导航
@@ -95,83 +184,11 @@ smart-shopping-guide-agent/
 |------|------|
 | **[`docs/prd.md`](docs/prd.md)** | **产品需求文档（PRD）— 项目核心** |
 | [`docs/architecture.md`](docs/architecture.md) | 端到端架构设计 + 数据流 |
-| [`docs/roadmap.md`](docs/roadmap.md) | 5 个阶段的详细路线图 |
 | [`backend/README.md`](backend/README.md) | 后端服务说明 |
 | [`frontend-console/README.md`](frontend-console/README.md) | 服务端 Console 说明 |
 | [`frontend-h5/README.md`](frontend-h5/README.md) | 移动端 H5 说明 |
 | [`knowledge/README.md`](knowledge/README.md) | 知识库结构与使用 |
 | [`deployment/README.md`](deployment/README.md) | 部署方式 |
-
-## 快速开始（开发）
-
-### 后端服务
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
-```
-
-### 服务端 Console
-
-```bash
-cd frontend-console
-npm install
-npm run dev
-# Console 在 http://localhost:5173 (开发模式)
-```
-
-### 移动端 H5
-
-```bash
-cd frontend-h5
-npm install
-npm run dev
-# H5 在 http://localhost:5174 (开发模式)
-# 手机扫码访问 http://<开发机 IP>:5174
-```
-
-### 一键部署（Docker，部署目标：FusionXpark GB10）
-
-> **Demo 阶段直接 Docker 部署，不做 .kwapp / 1Panel 包装。** 简单优先，跑通场景为先。
-
-```bash
-# 在 FusionXpark GB10（或任意 NVIDIA GPU 主机）上：
-
-# 方式 1：使用 docker compose（推荐）
-docker compose -f deployment/docker/docker-compose.yml up -d
-
-# 方式 2：使用便捷脚本
-./scripts/start.sh
-
-# 方式 3：单条 docker run 命令
-docker run -d --gpus all -p 8080:8080 \
-  -v $(pwd)/knowledge:/app/knowledge \
-  -v $(pwd)/models:/app/models \
-  -v $(pwd)/logs:/app/logs \
-  -e DEMO_MODE=true \
-  ghcr.io/kerrykuang2023/smart-guide-agent:latest
-```
-
-部署后访问：
-- 服务端 Console: `http://<gb10-ip>:8080/`
-- 移动端 H5: `http://<gb10-ip>:8080/m`（通过 Console QR 页面扫码进入）
-
-详细部署说明见 [`deployment/README.md`](deployment/README.md)
-
-## 路线图
-
-- [x] 项目初始化 + PRD 文档
-- [ ] **Phase 1 - MVP H5 Demo（第 1 周）**
-  - [ ] 后端 FastAPI + Qwen-VL 集成
-  - [ ] 服务端 Console（含 QR Code 页面）
-  - [ ] 移动端 H5（拍照 + 结果展示）
-  - [ ] 3-5 个 SKU 知识库 + 图片库
-  - [ ] Docker Compose 一键部署到 FusionXpark GB10
-- [ ] **Phase 2 - 企业版（第 2-3 周）**：Flutter App + 生产级 Docker 部署 + 客户验证
-- [ ] **Phase 3 - 知识库扩展**：100+ SKU、ERP 集成、ROI 看板
-- [ ] **Phase 4 - 高级功能**：语音对话、AR 叠加、多语言
-- [ ] **Phase 5 - KWeaver Box 集成**：打包为 .kwapp 上架 AppHub
 
 ## 关于 KWeaver Box
 
