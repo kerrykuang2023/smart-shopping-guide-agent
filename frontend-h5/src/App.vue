@@ -40,6 +40,10 @@ const isRecording = ref(false);
 const isAiSpeaking = ref(false);
 const isAiThinking = ref(false);
 
+// 对话上下文状态
+const contextHistory = ref<Array<{role: string, content: string}>>([]);
+const chatSummary = ref<string | null>(null);
+
 // 语音合成
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 
@@ -72,6 +76,10 @@ async function processImageRecognition(blob: Blob, filename: string) {
   pageState.value = 'scanning';
   scanProgress.value = 0;
   scanAngle.value = 0;
+  
+  // 清理上下文记忆
+  contextHistory.value = [];
+  chatSummary.value = null;
   
   // 模拟雷达扫描动画
   const scanInterval = setInterval(() => {
@@ -263,13 +271,11 @@ async function sendMessage() {
   isAiThinking.value = true;
   
   try {
-    // 构建请求体，包含历史对话
+    // 构建请求体，包含历史对话和摘要
     const requestBody: any = { 
       message: userText,
-      history: messages.value.slice(0, -1).map(m => ({  // 不包含当前消息
-        role: m.type,
-        content: m.text
-      }))
+      history: contextHistory.value,
+      summary: chatSummary.value
     };
     
     // 如果是已识别商品，添加 sku
@@ -289,6 +295,18 @@ async function sendMessage() {
     isAiThinking.value = false;
     
     messages.value.push({ type: 'ai', text: data.answer });
+    
+    // 更新上下文记忆
+    if (data.history) {
+      contextHistory.value = data.history;
+    } else {
+      contextHistory.value.push({ role: 'user', content: userText });
+      contextHistory.value.push({ role: 'assistant', content: data.answer });
+    }
+    
+    if (data.summary !== undefined) {
+      chatSummary.value = data.summary;
+    }
     
     // 语音播报回复
     speak(data.answer);

@@ -19,8 +19,9 @@ class ChatService:
         product: Product, 
         message: str, 
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None
-    ) -> tuple[str, bool, str]:
+        history: list[ChatMessage] = None,
+        summary: str | None = None
+    ) -> tuple[str, bool, str, str | None, list[ChatMessage]]:
         """
         生成导购回复，支持对话历史上下文
         
@@ -29,28 +30,111 @@ class ChatService:
             message: 当前用户消息
             settings: 运行时设置
             history: 对话历史（可选）
+            summary: 历史摘要（可选）
         
         Returns:
-            (answer_text, is_mocked, source)
+            (answer_text, is_mocked, source, new_summary, new_history)
         """
         history = history or []
+        new_summary, new_history = self._compress_memory(summary, history, settings)
         
         # 优先使用远程 LLM 生成自然话术
         if settings.llm_base_url.strip():
-            remote = self._answer_with_sales_llm(product, message, settings, history)
+            remote = self._answer_with_sales_llm(product, message, settings, new_history, new_summary)
             if remote:
-                return remote, False, "remote_llm"
+                new_history.append(ChatMessage(role="user", content=message))
+                new_history.append(ChatMessage(role="assistant", content=remote))
+                return remote, False, "remote_llm", new_summary, new_history
 
         # Fallback: 使用本地模板生成话术（简化版，忽略历史）
-        return self._generate_sales_pitch(product, message), True, "knowledge_base"
+        local_answer = self._generate_sales_pitch(product, message)
+        new_history.append(ChatMessage(role="user", content=message))
+        new_history.append(ChatMessage(role="assistant", content=local_answer))
+        return local_answer, True, "knowledge_base", new_summary, new_history
+
+    def general_answer(
+        self, 
+        message: str, 
+        settings: RuntimeSettings,
+        history: list[ChatMessage] = None,
+        summary: str | None = None
+    ) -> tuple[str, bool, str, str | None, list[ChatMessage]]:
+        """
+        生成通用回复（当未识别到特定商品时）
+        
+        Returns:
+            (answer_text, is_mocked, source, new_summary, new_history)
+        """
+        history = history or []
+        new_summary, new_history = self._compress_memory(summary, history, settings)
+
+        if settings.llm_base_url.strip():
+            remote = self._answer_with_general_llm(message, settings, new_history, new_summary)
+            if remote:
+                new_history.append(ChatMessage(role="user", content=message))
+                new_history.append(ChatMessage(role="assistant", content=remote))
+                return remote, False, "remote_llm", new_summary, new_history
+                
+        local_answer = self._generate_general_response(message)
+        new_history.append(ChatMessage(role="user", content=message))
+        new_history.append(ChatMessage(role="assistant", content=local_answer))
+        return local_answer, True, "general_knowledge", new_summary, new_history
+
+    def _compress_memory(self, summary: str | None, history: list[ChatMessage], settings: RuntimeSettings) -> tuple[str | None, list[ChatMessage]]:
+        """
+        压缩短期记忆：当历史超过 10 条（5轮）时，将前 6 条（3轮）压缩为摘要
+        """
+        if len(history) <= 10:
+            return summary, history
+
+        old_msgs = history[:6]
+        new_history = history[6:]
+
+        if not settings.llm_base_url or not settings.llm_api_key:
+            # 如果没有配置 LLM，则直接截断以避免上下文过长
+            return summary, new_history
+
+        dialogue_text = "\n".join([f"{'用户' if m.role == 'user' else '导购'}: {m.content}" for m in old_msgs])
+        prompt = "你是一个对话历史摘要助手。请将以下历史对话内容进行压缩总结。\n"
+        prompt += "要求：\n1. 提取用户关注的核心问题、偏好以及已经讨论过的商品信息。\n2. 保持精简，丢弃寒暄和无关紧要的细节。\n3. 如果有之前的摘要，请将其与新的对话内容合并，形成一个连贯的新摘要。\n\n"
+
+        if summary:
+            prompt += f"【之前的摘要】\n{summary}\n\n"
+
+        prompt += f"【新增的对话记录】\n{dialogue_text}\n\n请输出最新的压缩摘要："
+
+        try:
+            req_body = {
+                "model": settings.llm_model or "qwen-plus",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 500
+            }
+            req = urllib.request.Request(
+                settings.llm_base_url,
+                data=json.dumps(req_body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {settings.llm_api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                new_summary = result["choices"][0]["message"]["content"].strip()
+                print(f"[Memory] Compressed {len(old_msgs)} messages into summary.")
+                return new_summary, new_history
+        except Exception as e:
+            print(f"[Memory] Compression failed: {e}")
+            # 如果压缩失败，直接丢弃旧消息
+            return summary, new_history
 
     @staticmethod
-    def _build_sales_system_prompt() -> str:
+    def _build_sales_system_prompt(summary: str | None = None) -> str:
         """
         构建金牌导购的系统提示词
         强调情绪价值、销售技巧和自然对话
         """
-        return """你是一位经验丰富的金牌门店导购，擅长用热情、专业且有感染力的方式向顾客介绍产品。
+        prompt = """你是一位经验丰富的金牌门店导购，擅长用热情、专业且有感染力的方式向顾客介绍产品。
 
 【你的风格特点】
 1. **热情亲和**：像对待朋友一样，用"您"称呼，语气温暖不机械
@@ -74,6 +158,11 @@ class ChatService:
 - 不要过度承诺
 
 记住：你是在帮顾客解决问题，而不只是卖东西。"""
+        
+        if summary:
+            prompt += f"\n\n【之前的对话摘要】\n{summary}\n请在回答时参考上述摘要，保持对话的连贯性，不要重复已经说过的信息。"
+            
+        return prompt
 
     @staticmethod
     def _build_product_context(product: Product) -> str:
@@ -141,7 +230,8 @@ class ChatService:
         product: Product, 
         message: str, 
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None
+        history: list[ChatMessage] = None,
+        summary: str | None = None
     ) -> str | None:
         """
         使用远程 LLM 生成销售话术，支持对话历史上下文
@@ -151,7 +241,7 @@ class ChatService:
             endpoint = f"{endpoint}/v1/chat/completions"
 
         product_context = ChatService._build_product_context(product)
-        system_prompt = ChatService._build_sales_system_prompt()
+        system_prompt = ChatService._build_sales_system_prompt(summary)
 
         # 构建消息列表，包含历史对话
         messages = [
@@ -332,13 +422,14 @@ class ChatService:
         self, 
         message: str, 
         settings: RuntimeSettings,
-        history: list[ChatMessage] = None
+        history: list[ChatMessage] = None,
+        summary: str | None = None
     ) -> str | None:
         """
         调用远程 LLM 进行通用对话，支持对话历史上下文
         """
         try:
-            system_prompt = self._build_general_system_prompt()
+            system_prompt = self._build_general_system_prompt(summary)
             
             # 构建消息列表
             messages = [

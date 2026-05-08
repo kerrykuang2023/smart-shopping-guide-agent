@@ -136,6 +136,7 @@ class ChatRequest(BaseModel):
     sku: str | None = None  # 可选，不指定时使用通用对话模式
     message: str
     history: list[ChatMessage] = Field(default_factory=list)  # 对话历史
+    summary: str | None = None  # 短期记忆摘要
 
 
 class ChatResponse(BaseModel):
@@ -143,6 +144,8 @@ class ChatResponse(BaseModel):
     answer: str
     mocked: bool = False
     source: str = "knowledge_base"  # knowledge_base, remote_llm, general_knowledge
+    summary: str | None = None  # 更新后的摘要
+    history: list[ChatMessage] | None = None  # 更新后的历史记录
 
 
 class TestConnectionRequest(BaseModel):

@@ -254,10 +254,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
     
     # 通用对话模式（未指定 SKU 或商品未识别）
     if not payload.sku:
-        answer, mocked, source = chat_service.general_answer(
+        answer, mocked, source, new_summary, new_history = chat_service.general_answer(
             message=payload.message,
             settings=runtime_settings,
             history=payload.history,
+            summary=payload.summary,
         )
         activity_log_service.add(
             ActivityLogEntry(
@@ -268,18 +269,26 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 details={"source": source, "message": payload.message, "mode": "general", "history_length": len(payload.history)},
             )
         )
-        return ChatResponse(sku=None, answer=answer, mocked=mocked, source=source)
+        return ChatResponse(
+            sku=None, 
+            answer=answer, 
+            mocked=mocked, 
+            source=source,
+            summary=new_summary,
+            history=new_history
+        )
     
     # 指定了 SKU，使用产品知识库对话
     product = knowledge_service.get_product(payload.sku)
     if product is None:
         raise HTTPException(status_code=404, detail=f"SKU not found: {payload.sku}")
 
-    answer, mocked, source = chat_service.answer(
+    answer, mocked, source, new_summary, new_history = chat_service.answer(
         product=product,
         message=payload.message,
         settings=runtime_settings,
         history=payload.history,
+        summary=payload.summary,
     )
     activity_log_service.add(
         ActivityLogEntry(
@@ -290,7 +299,14 @@ def chat(payload: ChatRequest) -> ChatResponse:
             details={"source": source, "message": payload.message, "history_length": len(payload.history)},
         )
     )
-    return ChatResponse(sku=payload.sku, answer=answer, mocked=mocked, source=source)
+    return ChatResponse(
+        sku=payload.sku, 
+        answer=answer, 
+        mocked=mocked, 
+        source=source,
+        summary=new_summary,
+        history=new_history
+    )
 
 
 @app.get("/images/{filename:path}")
