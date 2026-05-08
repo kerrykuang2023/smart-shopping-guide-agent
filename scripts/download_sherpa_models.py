@@ -43,7 +43,7 @@ def download_and_extract(model_key: str, dest_dir: Path):
     
     # 检查是否已存在解压后的目录
     if (dest_dir / dirname).exists():
-        print(f"  ✓ 模型 {config['name']} 已存在，跳过下载")
+        print(f"  [OK] 模型 {config['name']} 已存在，跳过下载")
         return True
 
     print(f"  下载: {url}")
@@ -75,11 +75,11 @@ def download_and_extract(model_key: str, dest_dir: Path):
             
         # 清理压缩包
         tar_path.unlink()
-        print(f"  ✓ 解压完成")
+        print(f"  [OK] 解压完成")
         return True
         
     except Exception as e:
-        print(f"\n  ✗ 下载或解压失败: {e}")
+        print(f"\n  [ERROR] 下载或解压失败: {e}")
         if tar_path.exists():
             tar_path.unlink()
         return False
@@ -116,11 +116,11 @@ def main():
 
     if not success:
         print("\n" + "="*60)
-        print("✗ 部分模型下载失败，请检查网络连接")
+        print("[ERROR] 部分模型下载失败，请检查网络连接")
         sys.exit(1)
     else:
         print("\n" + "="*60)
-        print("✨ 所有请求的模型均已就绪！")
+        print("[SUCCESS] 所有请求的模型均已就绪！")
 
 
 if __name__ == "__main__":
