@@ -127,9 +127,15 @@ class RuntimeSettingsUpdate(BaseModel):
     asr_model: str | None = None
 
 
+class ChatMessage(BaseModel):
+    role: str  # 'user' | 'assistant'
+    content: str
+
+
 class ChatRequest(BaseModel):
     sku: str | None = None  # 可选，不指定时使用通用对话模式
     message: str
+    history: list[ChatMessage] = Field(default_factory=list)  # 对话历史
 
 
 class ChatResponse(BaseModel):

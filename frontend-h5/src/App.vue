@@ -263,8 +263,16 @@ async function sendMessage() {
   isAiThinking.value = true;
   
   try {
-    // 构建请求体，如果是通用对话模式（未识别商品），则不传 sku
-    const requestBody: any = { message: userText };
+    // 构建请求体，包含历史对话
+    const requestBody: any = { 
+      message: userText,
+      history: messages.value.slice(0, -1).map(m => ({  // 不包含当前消息
+        role: m.type,
+        content: m.text
+      }))
+    };
+    
+    // 如果是已识别商品，添加 sku
     if (result.value?.recognized && result.value?.sku) {
       requestBody.sku = result.value.sku;
     }

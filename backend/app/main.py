@@ -257,6 +257,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         answer, mocked, source = chat_service.general_answer(
             message=payload.message,
             settings=runtime_settings,
+            history=payload.history,
         )
         activity_log_service.add(
             ActivityLogEntry(
@@ -264,7 +265,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 action="chat",
                 sku=None,
                 mocked=mocked,
-                details={"source": source, "message": payload.message, "mode": "general"},
+                details={"source": source, "message": payload.message, "mode": "general", "history_length": len(payload.history)},
             )
         )
         return ChatResponse(sku=None, answer=answer, mocked=mocked, source=source)
@@ -278,6 +279,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         product=product,
         message=payload.message,
         settings=runtime_settings,
+        history=payload.history,
     )
     activity_log_service.add(
         ActivityLogEntry(
@@ -285,7 +287,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action="chat",
             sku=payload.sku,
             mocked=mocked,
-            details={"source": source, "message": payload.message},
+            details={"source": source, "message": payload.message, "history_length": len(payload.history)},
         )
     )
     return ChatResponse(sku=payload.sku, answer=answer, mocked=mocked, source=source)

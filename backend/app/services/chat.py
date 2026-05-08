@@ -4,29 +4,44 @@ import json
 import urllib.error
 import urllib.request
 
-from app.models import Product, RuntimeSettings
+from app.models import ChatMessage, Product, RuntimeSettings
 
 
 class ChatService:
     """
     智能导购对话服务
     将产品信息转化为有感染力、有情绪价值的销售话术
+    支持多轮对话上下文
     """
 
-    def answer(self, product: Product, message: str, settings: RuntimeSettings) -> tuple[str, bool, str]:
+    def answer(
+        self, 
+        product: Product, 
+        message: str, 
+        settings: RuntimeSettings,
+        history: list[ChatMessage] = None
+    ) -> tuple[str, bool, str]:
         """
-        生成导购回复
+        生成导购回复，支持对话历史上下文
+        
+        Args:
+            product: 产品信息
+            message: 当前用户消息
+            settings: 运行时设置
+            history: 对话历史（可选）
         
         Returns:
             (answer_text, is_mocked, source)
         """
+        history = history or []
+        
         # 优先使用远程 LLM 生成自然话术
         if settings.llm_base_url.strip():
-            remote = self._answer_with_sales_llm(product, message, settings)
+            remote = self._answer_with_sales_llm(product, message, settings, history)
             if remote:
                 return remote, False, "remote_llm"
 
-        # Fallback: 使用本地模板生成话术
+        # Fallback: 使用本地模板生成话术（简化版，忽略历史）
         return self._generate_sales_pitch(product, message), True, "knowledge_base"
 
     @staticmethod
@@ -122,9 +137,14 @@ class ChatService:
         return context
 
     @staticmethod
-    def _answer_with_sales_llm(product: Product, message: str, settings: RuntimeSettings) -> str | None:
+    def _answer_with_sales_llm(
+        product: Product, 
+        message: str, 
+        settings: RuntimeSettings,
+        history: list[ChatMessage] = None
+    ) -> str | None:
         """
-        使用远程 LLM 生成销售话术
+        使用远程 LLM 生成销售话术，支持对话历史上下文
         """
         endpoint = settings.llm_base_url.rstrip("/")
         if not endpoint.endswith("/v1/chat/completions"):
@@ -133,20 +153,31 @@ class ChatService:
         product_context = ChatService._build_product_context(product)
         system_prompt = ChatService._build_sales_system_prompt()
 
+        # 构建消息列表，包含历史对话
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"{product_context}\n\n【当前对话背景】\n你正在向顾客介绍上述产品。请基于历史对话和当前问题，用金牌导购的方式自然回应，不要重复已经讲过的内容。"},
+        ]
+        
+        # 添加历史对话
+        if history:
+            for msg in history[-6:]:  # 只保留最近6轮，避免超出 token 限制
+                messages.append({
+                    "role": "assistant" if msg.role == "ai" else msg.role,
+                    "content": msg.content
+                })
+        
+        # 添加当前问题
+        messages.append({
+            "role": "user",
+            "content": f"【顾客的新问题】\n{message}\n\n请自然回应，像跟朋友聊天一样，不要机械重复之前的介绍。",
+        })
+
         payload = {
             "model": settings.llm_model,
-            "temperature": 0.7,  # 稍微提高温度，让回答更有活力
+            "temperature": 0.7,
             "max_tokens": 500,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": f"{product_context}\n\n【顾客的问题/需求】\n{message}\n\n请用金牌导购的方式回应，像跟朋友聊天一样自然，突出产品价值，让顾客心动。",
-                },
-            ],
+            "messages": messages,
         }
         
         headers = {"Content-Type": "application/json"}
@@ -249,20 +280,27 @@ class ChatService:
         
         return "".join(parts)
 
-    def general_answer(self, message: str, settings: RuntimeSettings) -> tuple[str, bool, str]:
+    def general_answer(
+        self, 
+        message: str, 
+        settings: RuntimeSettings,
+        history: list[ChatMessage] = None
+    ) -> tuple[str, bool, str]:
         """
-        通用对话回复（当商品未在知识库中识别时使用）
+        通用对话回复（当商品未在知识库中识别时使用），支持对话历史
         
         Returns:
             (answer_text, is_mocked, source)
         """
+        history = history or []
+        
         # 优先使用远程 LLM 生成回复
         if settings.llm_base_url.strip():
-            remote = self._answer_with_general_llm(message, settings)
+            remote = self._answer_with_general_llm(message, settings, history)
             if remote:
                 return remote, False, "remote_llm"
         
-        # Fallback: 使用本地模板生成友好的通用回复
+        # Fallback: 使用本地模板生成友好的通用回复（简化版，忽略历史）
         return self._generate_general_response(message), True, "general_knowledge"
     
     @staticmethod
@@ -290,22 +328,41 @@ class ChatService:
 - 保持热情友善的语气
 - 如果完全不了解，诚实说明并询问更多信息"""
     
-    def _answer_with_general_llm(self, message: str, settings: RuntimeSettings) -> str | None:
+    def _answer_with_general_llm(
+        self, 
+        message: str, 
+        settings: RuntimeSettings,
+        history: list[ChatMessage] = None
+    ) -> str | None:
         """
-        调用远程 LLM 进行通用对话
+        调用远程 LLM 进行通用对话，支持对话历史上下文
         """
         try:
             system_prompt = self._build_general_system_prompt()
             
-            user_prompt = f"用户问题：{message}\n\n请基于通用购物知识，友善地回答用户的问题。如果商品不在库中，请先说明这一点。"
+            # 构建消息列表
+            messages = [
+                {"role": "system", "content": system_prompt},
+            ]
+            
+            # 添加历史对话
+            if history:
+                for msg in history[-6:]:
+                    messages.append({
+                        "role": "assistant" if msg.role == "ai" else msg.role,
+                        "content": msg.content
+                    })
+            
+            # 添加当前问题
+            messages.append({
+                "role": "user", 
+                "content": f"【用户新问题】\n{message}\n\n请基于对话历史和通用知识，自然回应，不要重复之前的内容。"
+            })
             
             payload = {
                 "model": settings.llm_model or "qwen-plus",
                 "temperature": 0.7,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                "messages": messages,
             }
             
             headers = {
@@ -315,7 +372,7 @@ class ChatService:
             
             req = urllib.request.Request(
                 f"{settings.llm_base_url.rstrip('/')}/v1/chat/completions",
-                data=json.dumps(payload).encode("utf-8"),
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                 headers=headers,
                 method="POST",
             )
