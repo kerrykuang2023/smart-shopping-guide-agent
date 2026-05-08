@@ -21,14 +21,14 @@ COPY knowledge /app/knowledge
 COPY frontend-console/dist /app/frontend-console/dist
 COPY frontend-h5/dist /app/frontend-h5/dist
 COPY scripts /app/scripts
-
-# 创建模型目录并下载离线语音模型
-RUN mkdir -p /app/backend/models && \
-    python /app/scripts/download_sherpa_models.py --all
+COPY deployment/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && mkdir -p /app/backend/models
 
 WORKDIR /app/backend
 
 EXPOSE 8080
 
+# 模型在运行时由 entrypoint 判断：卷里已有则跳过（避免每次 build 拉超大文件）
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     models_dir: Path = Field(default=Path(__file__).resolve().parents[1] / "models", alias="MODELS_DIR")
     logs_dir: Path = Field(default=Path(__file__).resolve().parents[1] / "logs", alias="LOGS_DIR")
+    #: 控制台保存的 VLM/LLM 等运行时配置 JSON；部署时挂到宿主机卷则更新镜像后不丢失。默认仍写在 logs_dir 下（与旧行为兼容）。
+    runtime_settings_file: Path | None = Field(default=None, alias="RUNTIME_SETTINGS_FILE")
 
     vlm_provider: str = Field(default="mock", alias="VLM_PROVIDER")
     vlm_model_name: str = Field(default="Qwen/Qwen2.5-VL-7B-Instruct", alias="VLM_MODEL_NAME")

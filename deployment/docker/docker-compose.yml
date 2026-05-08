@@ -13,10 +13,16 @@ services:
       WORKSPACE_DIR: /app
       KNOWLEDGE_PRODUCTS_DIR: /app/knowledge/products
       IMAGE_DIR: /app/knowledge/images
+      # 与后端默认一致；entrypoint 与 download_sherpa_models.py 共用此路径
+      SHERPA_MODELS_DIR: /app/backend/models
+      # 控制台配置（VLM/LLM 等）持久化文件；对应宿主机 ./data 卷
+      RUNTIME_SETTINGS_FILE: /app/data/runtime-settings.json
     volumes:
       - ../../knowledge:/app/knowledge
-      - ../../models:/app/models
+      # 持久化 ASR/TTS：后续部署只更新镜像，模型留在宿主机，不再重复下载
+      - ../../backend/models:/app/backend/models
       - ../../logs:/app/logs
+      - ../../data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3)"]
       interval: 30s

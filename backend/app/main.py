@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
+import logging
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +40,14 @@ from app.services.runtime_settings import RuntimeSettingsService
 from app.services.tts import get_tts_service
 
 settings = get_settings()
+
+def _runtime_settings_path() -> Path:
+    if settings.runtime_settings_file is not None:
+        return settings.runtime_settings_file
+    return settings.logs_dir / "runtime-settings.json"
+
+
+runtime_settings_service = RuntimeSettingsService(_runtime_settings_path())
 knowledge_service = KnowledgeBaseService(settings.knowledge_products_dir)
 guide_service = GuideService()
 recognizer_service = RecognizerService(
@@ -45,7 +55,6 @@ recognizer_service = RecognizerService(
     mock_always_pick_sku=settings.mock_vlm_always_pick_sku,
 )
 activity_log_service = ActivityLogService()
-runtime_settings_service = RuntimeSettingsService(settings.logs_dir / "runtime-settings.json")
 chat_service = ChatService()
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
@@ -79,6 +88,11 @@ def _mount_static_apps() -> None:
 def startup_event() -> None:
     loaded = knowledge_service.load()
     runtime_settings_service.load()
+    logging.getLogger(__name__).info(
+        "Runtime settings loaded from: %s (exists=%s)",
+        runtime_settings_service.file_path,
+        runtime_settings_service.file_path.exists(),
+    )
     activity_log_service.seed_startup()
     activity_log_service.add(
         ActivityLogEntry(
@@ -129,6 +143,54 @@ RECOGNITION_AMBIGUOUS_USER_MESSAGE = (
 )
 
 
+def _recognition_api_trace(
+    runtime: RuntimeSettings,
+    image_bytes_len: int,
+    recognizer_reason: str,
+) -> dict[str, Any]:
+    """与 Recognizer 实际行为一致：仅当配置了 vlm_base_url 时才 POST 到 OpenAI 兼容 vLLM 地址。"""
+    st = get_settings()
+    model_name = (runtime.vlm_model or st.vlm_model_name).strip()
+    if runtime.vlm_base_url.strip():
+        url = RecognizerService.openai_chat_completions_url(runtime.vlm_base_url)
+        est_b64_chars = (image_bytes_len * 4 + 2) // 3
+        return {
+            "phase": "openai_compatible_vlm",
+            "http": {"method": "POST", "url": url},
+            "note": "控制台基址填 http://ip:port/ 时会自动拼接为 …/v1/chat/completions（与 vLLM OpenAI 兼容路由一致）。",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": ("Bearer <configured>" if runtime.vlm_api_key.strip() else "(none)"),
+            },
+            "json_body_shape": {
+                "model": model_name,
+                "temperature": 0,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "(展区签字笔 SKU 识别提示词 + 允许 SKU 列表)"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/*;base64,<~{est_b64_chars} chars from {image_bytes_len}B upload>"
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+            "upload": {"bytes": image_bytes_len},
+            "recognizer_reason": recognizer_reason,
+        }
+    return {
+        "phase": "local_fallback",
+        "http": None,
+        "note": "vlm_base_url 为空，未发起远端 HTTP；当前为本地/mock 路径。",
+        "recognizer_reason": recognizer_reason,
+    }
+
+
 @app.post("/api/v1/recognize", response_model=RecognitionResponse)
 async def recognize(
     request: Request,
@@ -151,6 +213,7 @@ async def recognize(
         vlm_model=runtime_settings.vlm_model or settings.vlm_model_name,
     )
     mocked = False
+    api_trace = _recognition_api_trace(runtime_settings, len(payload), result.reason)
 
     ambiguous = not result.sku or result.confidence < settings.recognition_confidence_threshold
 
@@ -188,6 +251,7 @@ async def recognize(
                 guide_segments=[],
                 related_products=[],
                 competitors=[],
+                api_trace=api_trace,
             )
     else:
         product = knowledge_service.get_product(result.sku)
@@ -205,6 +269,7 @@ async def recognize(
         guide_segments=guide_segments,
         related_products=product.related_products,
         competitors=product.competitors,
+        api_trace=api_trace,
     )
 
     activity_log_service.add(

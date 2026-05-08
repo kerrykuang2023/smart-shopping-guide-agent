@@ -62,6 +62,8 @@ class RecognitionResponse(BaseModel):
     guide_segments: list[GuideSegment] = Field(default_factory=list)
     related_products: list[ProductRef] = Field(default_factory=list)
     competitors: list[ProductRef] = Field(default_factory=list)
+    #: 供 H5 调试：本次识图时服务端解析后的 VLM 调用说明（不含完整 base64）
+    api_trace: dict[str, Any] | None = None
 
 
 class ProductListResponse(BaseModel):

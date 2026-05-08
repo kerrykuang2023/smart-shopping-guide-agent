@@ -54,9 +54,30 @@ See `.env.example` for the full list. Key variables:
 
 | Mount | Purpose |
 |-------|---------|
-| `./knowledge` → `/app/knowledge` | Product YAML + images (read-only by default) |
-| `./models` → `/app/models` | Model cache (persisted to avoid re-download) |
+| `./knowledge` → `/app/knowledge` | Product YAML + images |
+| `./backend/models` → `/app/backend/models` | **Sherpa ASR/TTS** — persisted so updates skip re-download (see entrypoint below) |
 | `./logs` → `/app/logs` | Runtime logs |
+| `./data` → `/app/data` | **`runtime-settings.json`**（Console 里配置的 VLM/LLM 地址等）— 更新镜像或拉代码后仍保留 |
+
+环境变量 **`RUNTIME_SETTINGS_FILE=/app/data/runtime-settings.json`**（compose 已默认）将运行时配置写入该文件。
+
+若你过去把配置写在 `backend/logs/runtime-settings.json`，可一次性迁移到宿主机：
+
+`cp backend/logs/runtime-settings.json data/runtime-settings.json`（路径按实际仓库根调整）。
+
+## First deploy vs upgrade (models)
+
+The container **`entrypoint.sh`** runs before Uvicorn:
+
+- **首次启动**（宿主机 `./backend/models` 里还没有 ASR/TTS 目录或为空）：自动执行 `download_sherpa_models.py --all`，把模型写入该卷。
+- **之后更新镜像**（卷里已有 `sherpa-onnx-streaming-paraformer-bilingual-zh-en` 与 `vits-zh-hf-fanchen-c`）：**跳过下载**，直接启动。
+
+| Variable | Effect |
+|----------|--------|
+| `SKIP_SHERPA_DOWNLOAD=1` | 不检查、不下载（离线镜像已内置模型时用） |
+| `FORCE_SHERPA_DOWNLOAD=1` | 删除上述两个目录后**强制重新下载**（慎用） |
+
+镜像构建阶段**不再**下载模型，因此 `docker compose build` 不会因 TTS/ASR 体积反复拉网。
 
 ## GPU Requirements
 

@@ -7,6 +7,7 @@ type RecognizeResult = {
   recognized: boolean;
   message: string;
   mocked: boolean;
+  api_trace?: Record<string, unknown> | null;
   product: {
     name: string;
     price?: number;
@@ -32,6 +33,15 @@ const cameraError = ref('');
 const result = ref<RecognizeResult | null>(null);
 const scanProgress = ref(0);
 const scanAngle = ref(0); // 雷达扫描角度
+/** 扫描页底部：预检 + 服务端 api_trace，用于验证 VLM 调用 */
+const scanDebugPrint = ref('');
+
+/** 与后端 RecognizerService 一致：基址自动拼 /v1/chat/completions */
+function resolveOpenAIChatCompletionsUrl(base: string): string {
+  const b = base.trim().replace(/\/+$/, '');
+  if (b.endsWith('/v1/chat/completions')) return b;
+  return `${b}/v1/chat/completions`;
+}
 
 // 对话
 const messages = ref<Array<{type: 'user' | 'ai', text: string}>>([]);
@@ -180,6 +190,24 @@ async function processImageRecognition(blob: Blob, filename: string) {
     scanProgress.value = Math.min(scanProgress.value + 1.5, 95);
   }, 50);
   
+  scanDebugPrint.value = '';
+  let preflight = '';
+  try {
+    const sresp = await fetch('/api/v1/settings');
+    const s = (await sresp.json()) as { vlm_base_url?: string; vlm_model?: string };
+    const base = (s.vlm_base_url ?? '').trim();
+    if (base) {
+      const url = resolveOpenAIChatCompletionsUrl(base);
+      preflight = `[预检] OpenAI 兼容 VLM\nPOST ${url}\nmodel: ${(s.vlm_model ?? '').trim() || '(见后端默认)'}\n\n`;
+    } else {
+      preflight =
+        '[预检] vlm_base_url 为空 — 本次识图不会 POST 到 vLLM，将走本地/mock。\n\n';
+    }
+  } catch {
+    preflight = '[预检] 无法读取 /api/v1/settings\n\n';
+  }
+  scanDebugPrint.value = preflight;
+
   try {
     // 发送识别请求
     const formData = new FormData();
@@ -195,8 +223,14 @@ async function processImageRecognition(blob: Blob, filename: string) {
     result.value = await resp.json();
     clearInterval(scanInterval);
     scanProgress.value = 100;
+    const trace = result.value?.api_trace;
+    const tail = trace
+      ? `———— 服务端回传 api_trace（与本次 POST 一致）————\n${JSON.stringify(trace, null, 2)}`
+      : '———— 响应中无 api_trace ————';
+    scanDebugPrint.value = preflight + tail;
+    console.log('[recognize] api_trace', trace);
     
-    // 延迟后进入结果页（给用户看扫描完成的感觉）
+    // 延迟后进入结果页（给用户看扫描完成 + 底部调用信息）
     setTimeout(() => {
       if (!result.value?.recognized) {
         // 未识别到商品库中的商品，直接进入通用对话模式
@@ -215,10 +249,12 @@ async function processImageRecognition(blob: Blob, filename: string) {
         pageState.value = 'result';
         messages.value = [];
       }
-    }, 500);
+    }, 1200);
     
   } catch (e) {
     clearInterval(scanInterval);
+    scanDebugPrint.value = preflight + `\n[错误] ${e instanceof Error ? e.message : String(e)}`;
+    console.error(e);
     alert('识别失败，请重试');
     pageState.value = 'camera';
     await nextTick();
@@ -567,6 +603,7 @@ function restart() {
   chatSummary.value = null;
   inputText.value = '';
   pageState.value = 'camera';
+  scanDebugPrint.value = '';
 }
 
 // 初始化：先拉语音能力状态，再等 DOM 后开本机相机
@@ -666,6 +703,7 @@ onUnmounted(() => {
           <p class="scan-percent">{{ Math.round(scanProgress) }}%</p>
         </div>
       </div>
+      <pre v-if="scanDebugPrint" class="scan-debug-print">{{ scanDebugPrint }}</pre>
     </div>
     
     <!-- 结果页面 -->
@@ -967,9 +1005,32 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
   background: linear-gradient(180deg, #0a0f1a 0%, #0f172a 100%);
+}
+
+.scan-debug-print {
+  width: 100%;
+  max-width: 520px;
+  max-height: 32vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a5f3fc;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex-shrink: 0;
 }
 
 .real-radar {

@@ -30,6 +30,14 @@ class RecognizerService:
         self.provider = provider
         self.mock_always_pick_sku = mock_always_pick_sku
 
+    @staticmethod
+    def openai_chat_completions_url(base_url: str) -> str:
+        """OpenAI 兼容接口：POST {root}/v1/chat/completions（vLLM 常用）。"""
+        endpoint = base_url.strip().rstrip("/")
+        if not endpoint.endswith("/v1/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+        return endpoint
+
     def recognize(
         self,
         image_bytes: bytes,
@@ -79,9 +87,7 @@ class RecognizerService:
         POST {base}/v1/chat/completions
         Response content should contain one of allowed SKUs.
         """
-        endpoint = vlm_base_url.rstrip("/")
-        if not endpoint.endswith("/v1/chat/completions"):
-            endpoint = f"{endpoint}/v1/chat/completions"
+        endpoint = RecognizerService.openai_chat_completions_url(vlm_base_url)
 
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
         prompt = (

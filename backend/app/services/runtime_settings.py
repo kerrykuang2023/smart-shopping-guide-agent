@@ -13,9 +13,19 @@ class RuntimeSettingsService:
         self._settings = RuntimeSettings()
 
     def load(self) -> RuntimeSettings:
-        if self.file_path.exists():
+        if not self.file_path.exists():
+            return self._settings
+        try:
             data = json.loads(self.file_path.read_text(encoding="utf-8"))
             self._settings = RuntimeSettings.model_validate(data)
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "无法读取或解析运行时配置 %s: %s — 使用内存默认直至修复该文件",
+                self.file_path,
+                e,
+            )
         return self._settings
 
     def get(self) -> RuntimeSettings:
