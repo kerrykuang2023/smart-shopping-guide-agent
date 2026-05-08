@@ -44,34 +44,127 @@ const isAiThinking = ref(false);
 const contextHistory = ref<Array<{role: string, content: string}>>([]);
 const chatSummary = ref<string | null>(null);
 
-// 语音合成
+// 语音：边缘 TTS（手机扬声器播 WAV） + 浏览器 SpeechSynthesis 回退
 let currentUtterance: SpeechSynthesisUtterance | null = null;
+let currentTtsAudio: HTMLAudioElement | null = null;
 
-// 初始化相机
-async function initCamera() {
+const serverVoice = ref({ asr: false, tts: false });
+
+async function refreshVoiceStatus() {
   try {
-    stream.value = await navigator.mediaDevices.getUserMedia({
-      video: { 
-        facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    });
-    
-    if (videoRef.value) {
-      videoRef.value.srcObject = stream.value;
-      isCameraReady.value = true;
-      cameraError.value = '';
-    }
-  } catch (e) {
-    cameraError.value = '无法访问相机，请检查权限';
-    console.error('Camera error:', e);
+    const r = await fetch("/api/v1/voice/status");
+    if (!r.ok) return;
+    const d = await r.json();
+    serverVoice.value = { asr: !!d.asr_available, tts: !!d.tts_available };
+  } catch {
+    serverVoice.value = { asr: false, tts: false };
   }
 }
 
-// 处理图片识别流程
+function writeWavString(view: DataView, offset: number, str: string) {
+  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+}
+
+function pcm16ToWavBlob(samples: Int16Array, sampleRate: number): Blob {
+  const n = samples.length;
+  const buffer = new ArrayBuffer(44 + n * 2);
+  const view = new DataView(buffer);
+  writeWavString(view, 0, "RIFF");
+  view.setUint32(4, 36 + n * 2, true);
+  writeWavString(view, 8, "WAVE");
+  writeWavString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeWavString(view, 36, "data");
+  view.setUint32(40, n * 2, true);
+  let o = 44;
+  for (let i = 0; i < n; i++, o += 2) view.setInt16(o, samples[i]!, true);
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+/** 将 MediaRecorder 生成的 webm/mp4 等转为 16kHz 单声道 WAV，供边缘 ASR */
+async function mediaBlobTo16kMonoWavBlob(blob: Blob): Promise<Blob> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const ctx = new AudioContext();
+  try {
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+    const sr = audioBuffer.sampleRate;
+    const len = audioBuffer.length;
+    const nCh = audioBuffer.numberOfChannels;
+    const mono = new Float32Array(len);
+    if (nCh === 1) {
+      mono.set(audioBuffer.getChannelData(0));
+    } else {
+      for (let i = 0; i < len; i++) {
+        let s = 0;
+        for (let c = 0; c < nCh; c++) s += audioBuffer.getChannelData(c)[i] ?? 0;
+        mono[i] = s / nCh;
+      }
+    }
+    const targetSr = 16000;
+    const outLen = Math.max(1, Math.floor((len * targetSr) / sr));
+    const resampled = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const srcPos = (i * sr) / targetSr;
+      const j = Math.floor(srcPos);
+      const f = srcPos - j;
+      const a = mono[j] ?? 0;
+      const b = mono[j + 1] ?? a;
+      resampled[i] = a + (b - a) * f;
+    }
+    const int16 = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const s = Math.max(-1, Math.min(1, resampled[i]!));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return pcm16ToWavBlob(int16, targetSr);
+  } finally {
+    await ctx.close();
+  }
+}
+
+function releaseCameraStream() {
+  if (stream.value) {
+    stream.value.getTracks().forEach((t) => t.stop());
+    stream.value = null;
+  }
+  if (videoRef.value) videoRef.value.srcObject = null;
+  isCameraReady.value = false;
+}
+
+// 初始化相机（本机摄像头预览 + 本机拍照）
+async function initCamera() {
+  releaseCameraStream();
+  try {
+    stream.value = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+
+    await nextTick();
+    if (videoRef.value) {
+      videoRef.value.srcObject = stream.value;
+      isCameraReady.value = true;
+      cameraError.value = "";
+    }
+  } catch (e) {
+    cameraError.value = "无法访问本机相机，请在浏览器中允许摄像头权限（需 HTTPS 或局域网访问）";
+    console.error("Camera error:", e);
+  }
+}
+
+// 识别：本机拍/选图 → 上传服务端 VLM；扫描阶段释放摄像头省资源
 async function processImageRecognition(blob: Blob, filename: string) {
+  releaseCameraStream();
   // 进入扫描状态
   pageState.value = 'scanning';
   scanProgress.value = 0;
@@ -114,8 +207,7 @@ async function processImageRecognition(blob: Blob, filename: string) {
           type: 'ai',
           text: result.value?.message || '在您的产品库中还未收录该商品，但我可以基于我的知识尽力帮您解答问题。请告诉我您想了解什么？'
         });
-        // 语音播报
-        speak(messages.value[0].text);
+        void speakSmart(messages.value[0]!.text);
       } else {
         // 识别成功，显示产品详情
         pageState.value = 'result';
@@ -127,6 +219,8 @@ async function processImageRecognition(blob: Blob, filename: string) {
     clearInterval(scanInterval);
     alert('识别失败，请重试');
     pageState.value = 'camera';
+    await nextTick();
+    void initCamera();
   }
 }
 
@@ -167,83 +261,158 @@ async function handleFileSelect(event: Event) {
   input.value = '';
 }
 
-// 语音合成
+// 浏览器 SpeechSynthesis 回退（走本机扬声器）
 function speak(text: string, onEnd?: () => void) {
   if (!('speechSynthesis' in window)) return;
-  
+
   window.speechSynthesis.cancel();
-  
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'zh-CN';
   utterance.rate = 1.1;
   utterance.pitch = 1.05;
-  
-  // 尝试找中文女声
+
   const voices = window.speechSynthesis.getVoices();
-  const zhVoice = voices.find(v => v.lang.includes('zh'));
+  const zhVoice = voices.find((v) => v.lang.includes('zh'));
   if (zhVoice) utterance.voice = zhVoice;
-  
+
   isAiSpeaking.value = true;
   currentUtterance = utterance;
-  
+
   utterance.onend = () => {
+    currentUtterance = null;
     isAiSpeaking.value = false;
     onEnd?.();
   };
-  
+
   utterance.onerror = () => {
+    currentUtterance = null;
     isAiSpeaking.value = false;
   };
-  
+
   window.speechSynthesis.speak(utterance);
 }
 
-// 停止说话
-function stopSpeaking() {
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-    isAiSpeaking.value = false;
+/** 优先边缘 TTS（HTMLAudio → 手机扬声器），不可用时用语义合成 */
+async function speakSmart(text: string, onEnd?: () => void) {
+  stopSpeaking();
+  const t = text.trim();
+  if (!t) {
+    onEnd?.();
+    return;
+  }
+
+  if (serverVoice.value.tts) {
+    try {
+      const resp = await fetch('/api/v1/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: t, speed: 1.0 }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.success && data.audio_base64) {
+          playTtsWavBase64FromServer(t, data.audio_base64 as string, onEnd);
+          return;
+        }
+      }
+    } catch {
+      /* 回退浏览器 TTS */
+    }
+  }
+
+  speak(t, onEnd);
+}
+
+function playTtsWavBase64FromServer(textForFallback: string, base64: string, onEnd?: () => void) {
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentTtsAudio = audio;
+    isAiSpeaking.value = true;
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      currentTtsAudio = null;
+      isAiSpeaking.value = false;
+      onEnd?.();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      currentTtsAudio = null;
+      isAiSpeaking.value = false;
+      speak(textForFallback, onEnd);
+    };
+    void audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+      currentTtsAudio = null;
+      isAiSpeaking.value = false;
+      speak(textForFallback, onEnd);
+    });
+  } catch {
+    speak(textForFallback, onEnd);
   }
 }
 
-// 生成AI解读内容
-async function startAiExplanation() {
-  if (!result.value || !result.value.product) return;
-  
-  // 切换到对话模式
-  pageState.value = 'chat';
-  
-  // 先显示AI正在思考
+// 停止说话（服务端 TTS 音频或浏览器播报）
+function stopSpeaking() {
+  if (currentTtsAudio) {
+    currentTtsAudio.pause();
+    currentTtsAudio.src = '';
+    currentTtsAudio = null;
+  }
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+  isAiSpeaking.value = false;
+}
+
+async function runChatTurn(
+  userText: string,
+  options?: { showUserMessage?: boolean; onChatErrorFallback?: () => string }
+) {
+  const showUser = options?.showUserMessage !== false;
+  if (showUser) messages.value.push({ type: 'user', text: userText });
+
   isAiThinking.value = true;
-  
-  // 构建解读请求
+
   try {
+    const requestBody: Record<string, unknown> = {
+      message: userText,
+      history: contextHistory.value,
+      summary: chatSummary.value,
+    };
+    if (result.value?.recognized && result.value?.sku) requestBody.sku = result.value.sku;
+
     const resp = await fetch('/api/v1/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sku: result.value.sku,
-        message: '请为我详细介绍一下这款产品'
-      })
+      body: JSON.stringify(requestBody),
     });
-    
-    if (!resp.ok) throw new Error('请求失败');
-    
+    if (!resp.ok) throw new Error('chat failed');
+
     const data = await resp.json();
     isAiThinking.value = false;
-    
-    // 添加AI回复到对话
+
     messages.value.push({ type: 'ai', text: data.answer });
-    
-    // 语音播报
-    speak(data.answer);
-    
-  } catch (e) {
+
+    if (data.history) {
+      contextHistory.value = data.history as typeof contextHistory.value;
+    } else {
+      contextHistory.value.push({ role: 'user', content: userText });
+      contextHistory.value.push({ role: 'assistant', content: data.answer });
+    }
+    if (data.summary !== undefined) chatSummary.value = data.summary;
+
+    void speakSmart(data.answer);
+  } catch {
     isAiThinking.value = false;
-    // 使用本地讲解作为fallback
-    const fallbackText = generateLocalGuide(result.value);
-    messages.value.push({ type: 'ai', text: fallbackText });
-    speak(fallbackText);
+    const msg = options?.onChatErrorFallback?.() ?? '抱歉，我有点走神了，能再说一遍吗？';
+    messages.value.push({ type: 'ai', text: msg });
+    void speakSmart(msg);
   }
 }
 
@@ -259,129 +428,172 @@ function generateLocalGuide(result: RecognizeResult): string {
   return text;
 }
 
-// 发送消息
-async function sendMessage() {
-  if (!inputText.value.trim()) return;
-  
-  const userText = inputText.value.trim();
-  messages.value.push({ type: 'user', text: userText });
-  inputText.value = '';
-  
-  // 显示AI思考中
-  isAiThinking.value = true;
-  
-  try {
-    // 构建请求体，包含历史对话和摘要
-    const requestBody: any = { 
-      message: userText,
-      history: contextHistory.value,
-      summary: chatSummary.value
-    };
-    
-    // 如果是已识别商品，添加 sku
-    if (result.value?.recognized && result.value?.sku) {
-      requestBody.sku = result.value.sku;
-    }
-    
-    const resp = await fetch('/api/v1/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
-    
-    if (!resp.ok) throw new Error('请求失败');
-    
-    const data = await resp.json();
-    isAiThinking.value = false;
-    
-    messages.value.push({ type: 'ai', text: data.answer });
-    
-    // 更新上下文记忆
-    if (data.history) {
-      contextHistory.value = data.history;
-    } else {
-      contextHistory.value.push({ role: 'user', content: userText });
-      contextHistory.value.push({ role: 'assistant', content: data.answer });
-    }
-    
-    if (data.summary !== undefined) {
-      chatSummary.value = data.summary;
-    }
-    
-    // 语音播报回复
-    speak(data.answer);
-    
-  } catch (e) {
-    isAiThinking.value = false;
-    messages.value.push({
-      type: 'ai',
-      text: '抱歉，我有点走神了，能再说一遍吗？'
-    });
-  }
+// 一键解读（不展示占位用户气泡，语义与打字提问一致）
+async function startAiExplanation() {
+  if (!result.value || !result.value.product) return;
+
+  pageState.value = 'chat';
+  await runChatTurn('请为我详细介绍一下这款产品', {
+    showUserMessage: false,
+    onChatErrorFallback: () => generateLocalGuide(result.value!),
+  });
 }
 
-// 按住说话
+// 发送消息（本机输入法 → 服务端 LLM）
+async function sendMessage() {
+  const userText = inputText.value.trim();
+  if (!userText) return;
+  inputText.value = '';
+  await runChatTurn(userText);
+}
+
+// 按住说话：本机麦克风采集 → 转成 WAV → 边缘 ASR → 再走对话链路
 let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
 
 async function startVoiceInput() {
+  if (pageState.value !== 'chat') return;
+
   try {
-    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(audioStream);
+    const audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+
+    const mimePreferred = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+
     audioChunks = [];
-    
+    mediaRecorder = mimePreferred
+      ? new MediaRecorder(audioStream, { mimeType: mimePreferred })
+      : new MediaRecorder(audioStream);
+
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) audioChunks.push(e.data);
     };
-    
+
     mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-      audioStream.getTracks().forEach(t => t.stop());
-      
-      // 语音输入暂不支持，显示提示
-      messages.value.push({
-        type: 'user',
-        text: '🎤 [语音输入暂不支持，请使用文字]'
-      });
+      audioStream.getTracks().forEach((t) => t.stop());
+
+      const rawMime = audioChunks[0]?.type ?? mediaRecorder!.mimeType ?? 'audio/webm';
+      const raw = new Blob(audioChunks, { type: rawMime });
+
+      if (!serverVoice.value.asr) {
+        messages.value.push({
+          type: 'ai',
+          text: '🎤 服务端语音识别不可用，请先部署 ASR 模型或使用文字提问。',
+        });
+        return;
+      }
+
+      if (raw.size < 900) {
+        messages.value.push({ type: 'ai', text: '🎤 录音太短，请长按说完再松开。' });
+        return;
+      }
+
+      let wavBlob: Blob;
+      try {
+        wavBlob = await mediaBlobTo16kMonoWavBlob(raw);
+      } catch (err) {
+        console.warn('wav encode', err);
+        messages.value.push({ type: 'ai', text: '🎤 无法处理本机录音格式，请重试或改用文字。' });
+        return;
+      }
+
+      isAiThinking.value = true;
+
+      try {
+        const fd = new FormData();
+        fd.append('audio', wavBlob, 'speech.wav');
+
+        const resp = await fetch('/api/v1/asr', { method: 'POST', body: fd });
+        if (!resp.ok) throw new Error('asr_http');
+
+        const asrJson: { text?: string; success?: boolean } = await resp.json();
+        const text = (asrJson.text || '').trim();
+
+        isAiThinking.value = false;
+
+        if (!text) {
+          messages.value.push({
+            type: 'ai',
+            text: '🎤 没有听清，请靠近麦克风再说一次。',
+          });
+          return;
+        }
+
+        await runChatTurn(text);
+      } catch {
+        isAiThinking.value = false;
+        messages.value.push({ type: 'ai', text: '🎤 语音识别失败，请改用文字提问。' });
+      }
     };
-    
-    mediaRecorder.start();
+
+    mediaRecorder.start(120);
     isRecording.value = true;
   } catch (e) {
-    console.error('录音失败:', e);
+    console.error('麦克风权限或录音初始化失败:', e);
+    messages.value.push({
+      type: 'ai',
+      text: '🎤 无法使用本机麦克风，请在浏览器中允许麦克风权限。',
+    });
   }
 }
 
 function stopVoiceInput() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
     isRecording.value = false;
+    return;
   }
+  mediaRecorder.stop();
+  isRecording.value = false;
 }
 
 // 重新开始
 function restart() {
   stopSpeaking();
+  releaseCameraStream();
   result.value = null;
   messages.value = [];
+  contextHistory.value = [];
+  chatSummary.value = null;
   inputText.value = '';
   pageState.value = 'camera';
-  initCamera();
 }
 
-// 初始化
-onMounted(() => {
-  initCamera();
-  
+// 初始化：先拉语音能力状态，再等 DOM 后开本机相机
+watch(
+  pageState,
+  async (s) => {
+    if (s === 'camera') {
+      await refreshVoiceStatus();
+      await nextTick();
+      await initCamera();
+    }
+    if (s === 'chat') void refreshVoiceStatus();
+  },
+  { flush: 'post' }
+);
+
+onMounted(async () => {
+  await refreshVoiceStatus();
+  await nextTick();
+  await initCamera();
+
   if ('speechSynthesis' in window) {
     window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
   }
 });
 
 onUnmounted(() => {
-  if (stream.value) {
-    stream.value.getTracks().forEach(t => t.stop());
-  }
+  releaseCameraStream();
   stopSpeaking();
 });
 </script>

@@ -458,8 +458,14 @@ async def asr_endpoint(audio: UploadFile = File(...)):
     if not asr_service.is_available():
         raise HTTPException(status_code=503, detail="ASR 服务不可用，模型未下载")
 
-    if audio.content_type not in {"audio/wav", "audio/x-wav", "audio/wave"}:
-        raise HTTPException(status_code=400, detail="仅支持 WAV 格式音频")
+    fn = (audio.filename or "").lower()
+    allowed_ct = {"audio/wav", "audio/x-wav", "audio/wave", "application/octet-stream", ""}
+    ct = (audio.content_type or "").split(";")[0].strip()
+    if ct not in allowed_ct and not fn.endswith(".wav"):
+        raise HTTPException(
+            status_code=400,
+            detail="请上传 WAV 格式音频（手机端 multipart 可能为 application/octet-stream，需带 .wav 文件名）",
+        )
 
     audio_bytes = await audio.read()
     result = asr_service.recognize(audio_bytes)
