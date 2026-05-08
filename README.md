@@ -103,18 +103,10 @@ npm run dev
 - **文字追问**：输入框输入问题
 - **关联推荐**：查看搭配产品和竞品对比
 
-### 离线语音（可选）
+### 离线语音（开箱即用）
 
-如需使用本地语音识别和合成（无需网络）：
-
-```bash
-# 进入容器下载语音模型
-docker exec -it smart-guide-agent bash
-python scripts/download_sherpa_models.py --all
-
-# 退出并重启
-docker restart smart-guide-agent
-```
+系统已在 Docker 镜像构建时自动内置了 Sherpa-ONNX 的离线语音识别（ASR）和语音合成（TTS）模型。
+无需网络，无需配置 API Key，启动容器后即可直接使用实时的语音交互功能。
 
 ## 演示流程
 

@@ -40,8 +40,9 @@ class ASRService:
 
     def _check_models_exist(self) -> bool:
         """检查模型文件是否存在"""
-        model_file = self.models_dir / "paraformer-zh-en.int8.onnx"
-        tokens_file = self.models_dir / "paraformer-zh-en-tokens.txt"
+        model_dir = self.models_dir / "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+        model_file = model_dir / "encoder.int8.onnx"
+        tokens_file = model_dir / "tokens.txt"
         return model_file.exists() and tokens_file.exists()
 
     def initialize(self) -> bool:
@@ -59,8 +60,10 @@ class ASRService:
             return False
 
         try:
-            model_file = str(self.models_dir / "paraformer-zh-en.int8.onnx")
-            tokens_file = str(self.models_dir / "paraformer-zh-en-tokens.txt")
+            model_dir = self.models_dir / "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+            model_file = str(model_dir / "encoder.int8.onnx")
+            decoder_file = str(model_dir / "decoder.int8.onnx")
+            tokens_file = str(model_dir / "tokens.txt")
 
             # 创建识别器配置
             recognizer_config = sherpa_onnx.OnlineRecognizerConfig(
@@ -71,7 +74,7 @@ class ASRService:
                 model_config=sherpa_onnx.OnlineModelConfig(
                     paraformer=sherpa_onnx.OnlineParaformerModelConfig(
                         encoder=model_file,
-                        decoder="",
+                        decoder=decoder_file,
                     ),
                     tokens=tokens_file,
                     num_threads=4,

@@ -1,6 +1,6 @@
 """
 Sherpa-ONNX TTS Service
-基于 Matcha 的中文语音合成
+基于 VITS 的中文语音合成
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from app.config import get_settings
 class TTSService:
     """
     语音合成服务
-    使用 Sherpa-ONNX 的 Matcha 模型进行中文语音合成
+    使用 Sherpa-ONNX 的 VITS 模型进行中文语音合成
     """
 
     def __init__(self, models_dir: Optional[Path] = None) -> None:
@@ -39,11 +39,12 @@ class TTSService:
 
     def _check_models_exist(self) -> bool:
         """检查模型文件是否存在"""
+        model_dir = self.models_dir / "vits-zh-hf-fanchen-c"
         required_files = [
-            self.models_dir / "matcha-zh.onnx",
-            self.models_dir / "matcha-zh-tokens.txt",
-            self.models_dir / "matcha-zh-lexicon.txt",
-            self.models_dir / "vocos-22khz.onnx",
+            model_dir / "vits-zh-hf-fanchen-C.onnx",
+            model_dir / "tokens.txt",
+            model_dir / "lexicon.txt",
+            model_dir / "dict",
         ]
         return all(f.exists() for f in required_files)
 
@@ -62,21 +63,20 @@ class TTSService:
             return False
 
         try:
-            model_file = str(self.models_dir / "matcha-zh.onnx")
-            tokens_file = str(self.models_dir / "matcha-zh-tokens.txt")
-            lexicon_file = str(self.models_dir / "matcha-zh-lexicon.txt")
-            vocoder_file = str(self.models_dir / "vocos-22khz.onnx")
+            model_dir = self.models_dir / "vits-zh-hf-fanchen-c"
+            model_file = str(model_dir / "vits-zh-hf-fanchen-C.onnx")
+            tokens_file = str(model_dir / "tokens.txt")
+            lexicon_file = str(model_dir / "lexicon.txt")
+            dict_dir = str(model_dir / "dict")
 
             # 创建 TTS 配置
             tts_config = sherpa_onnx.OfflineTtsConfig(
                 model=sherpa_onnx.OfflineTtsModelConfig(
-                    matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
-                        acoustic_model=model_file,
-                        vocoder=vocoder_file,
+                    vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                        model=model_file,
                         lexicon=lexicon_file,
                         tokens=tokens_file,
-                        data_dir="",
-                        dict_dir="",
+                        data_dir=dict_dir,
                     ),
                     provider="cpu",
                     debug=False,

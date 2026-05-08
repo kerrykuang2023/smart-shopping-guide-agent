@@ -20,9 +20,11 @@ COPY backend /app/backend
 COPY knowledge /app/knowledge
 COPY frontend-console/dist /app/frontend-console/dist
 COPY frontend-h5/dist /app/frontend-h5/dist
+COPY scripts /app/scripts
 
-# 创建模型目录（挂载点）
-RUN mkdir -p /app/backend/models
+# 创建模型目录并下载离线语音模型
+RUN mkdir -p /app/backend/models && \
+    python /app/scripts/download_sherpa_models.py --all
 
 WORKDIR /app/backend
 
