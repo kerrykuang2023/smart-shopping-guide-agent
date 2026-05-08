@@ -374,18 +374,15 @@ onUnmounted(() => {
     <div v-if="pageState === 'camera'" class="camera-page">
       <video ref="videoRef" autoplay playsinline muted class="camera-feed" />
       
-      <!-- 雷达扫描框 -->
-      <div class="radar-overlay">
-        <div class="radar-frame">
-          <div class="radar-circle outer"></div>
-          <div class="radar-circle middle"></div>
-          <div class="radar-circle inner"></div>
-          <div class="radar-sweep" :style="{ transform: `rotate(${scanAngle}deg)` }"></div>
-          <div class="radar-center">
-            <span class="radar-icon">📡</span>
-          </div>
+      <!-- 拍照取景框 - 简洁的角落标记 -->
+      <div class="focus-frame">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="center-hint">
+          <span>📷 对准产品</span>
         </div>
-        <p class="radar-hint">对准产品，自动识别</p>
       </div>
       
       <div v-if="cameraError" class="camera-error">
@@ -508,15 +505,15 @@ onUnmounted(() => {
           </div>
         </div>
         
-        <!-- AI思考中 -->
+        <!-- AI思考中 - 显示专业提示 -->
         <div v-if="isAiThinking" class="message ai thinking">
-          <div class="bubble">
+          <div class="bubble thinking-bubble">
             <div class="thinking-animation">
               <span class="dot"></span>
               <span class="dot"></span>
               <span class="dot"></span>
             </div>
-            <span class="thinking-text">AI思考中...</span>
+            <span class="thinking-text">您这个问题很专业，让我思考一下...</span>
           </div>
         </div>
         
@@ -595,100 +592,71 @@ onUnmounted(() => {
   object-fit: cover;
 }
 
-/* 雷达扫描框 - 飞机雷达风格 */
-.radar-overlay {
+/* 拍照取景框 - 简洁的角落标记 */
+.focus-frame {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
+  width: 280px;
+  height: 280px;
+  pointer-events: none;
 }
 
-.radar-frame {
-  width: 260px;
-  height: 260px;
-  position: relative;
-}
-
-.radar-circle {
+.focus-frame .corner {
   position: absolute;
-  border-radius: 50%;
-  border: 2px solid rgba(59, 130, 246, 0.5);
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(255, 255, 255, 0.8);
 }
 
-.radar-circle.outer {
-  width: 100%;
-  height: 100%;
+.focus-frame .corner.tl {
   top: 0;
   left: 0;
-  animation: radarPulse 2s ease-out infinite;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 8px 0 0 0;
 }
 
-.radar-circle.middle {
-  width: 66%;
-  height: 66%;
-  top: 17%;
-  left: 17%;
-  border-color: rgba(59, 130, 246, 0.4);
+.focus-frame .corner.tr {
+  top: 0;
+  right: 0;
+  border-left: none;
+  border-bottom: none;
+  border-radius: 0 8px 0 0;
 }
 
-.radar-circle.inner {
-  width: 33%;
-  height: 33%;
-  top: 33.5%;
-  left: 33.5%;
-  border-color: rgba(59, 130, 246, 0.6);
+.focus-frame .corner.bl {
+  bottom: 0;
+  left: 0;
+  border-right: none;
+  border-top: none;
+  border-radius: 0 0 0 8px;
 }
 
-@keyframes radarPulse {
-  0% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(1.1); opacity: 0; }
+.focus-frame .corner.br {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+  border-radius: 0 0 8px 0;
 }
 
-/* 雷达扫描线 - 旋转效果 */
-.radar-sweep {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 50%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #3b82f6, #60a5fa);
-  transform-origin: 0 50%;
-  box-shadow: 0 0 10px #3b82f6;
-  animation: radarRotate 3s linear infinite;
-}
-
-@keyframes radarRotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.radar-center {
+.focus-frame .center-hint {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: rgba(59, 130, 246, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  text-align: center;
 }
 
-.radar-icon {
-  font-size: 12px;
-}
-
-.radar-hint {
-  color: rgba(255,255,255,0.9);
-  font-size: 15px;
+.focus-frame .center-hint span {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
   text-shadow: 0 2px 4px rgba(0,0,0,0.5);
-  letter-spacing: 1px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px 16px;
+  border-radius: 20px;
 }
 
 /* 底部控制 */
@@ -1150,8 +1118,15 @@ onUnmounted(() => {
 }
 
 .thinking-text {
-  font-size: 13px;
-  color: #93c5fd;
+  font-size: 14px;
+  color: #a78bfa;
+  font-style: italic;
+}
+
+/* 思考提示的特殊样式 */
+.message.thinking .bubble.thinking-bubble {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.1));
+  border: 1px solid rgba(139, 92, 246, 0.3);
 }
 
 /* AI说话条 */
