@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 
 type RecognizeResult = {
   sku: string | null;
@@ -21,6 +21,82 @@ type RecognizeResult = {
 // 页面状态
 const pageState = ref<'camera' | 'scanning' | 'result' | 'chat'>('camera');
 
+const CAM_SESSION_OK_KEY = 'smartguide_h5_cam_or_image_ok';
+
+function isLikelyMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
+}
+
+function cameraSessionOk(): boolean {
+  try {
+    return sessionStorage.getItem(CAM_SESSION_OK_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function rememberCameraOrGallerySessionOk(): void {
+  try {
+    sessionStorage.setItem(CAM_SESSION_OK_KEY, '1');
+  } catch {
+    /* 隐私模式下可能不可用 */
+  }
+}
+
+function refreshMobileCameraConsentPending(): void {
+  if (typeof window === 'undefined') return;
+  mobileCameraConsentPending.value =
+    isLikelyMobileDevice() && !cameraSessionOk();
+}
+
+function explainCameraDenied(err: unknown): string {
+  const secure = typeof window !== 'undefined' && window.isSecureContext;
+  const dom =
+    err && typeof err === 'object' && 'name' in err
+      ? (err as DOMException & { message?: string })
+      : null;
+  const name = dom?.name ?? '';
+
+  if (!secure) {
+    return (
+      '无法在「当前访问方式」下打开手机相机。**取景与拍照均在您的手机本地完成**，服务端只接收您上传的照片，不会也不能远程打开摄像头。' +
+      '多数浏览器要求 **HTTPS**（或电脑上的 localhost）才可授权摄像头——请改用 https 地址访问，或使用下方「相册」上传图片。'
+    );
+  }
+
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return (
+        '摄像头权限被拒绝。**预览与快门仅在本机**：只有您按下「拍照」后的图片会发到服务器识别。' +
+        '请在弹窗中选「允许」，或在系统设置中为本浏览器开启相机；也可直接使用「相册」。'
+      );
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return (
+        '未检测到摄像头。若在应用内置浏览器打开，可到菜单选择「用系统浏览器打开」，或直接使用「相册」上传。'
+      );
+    case 'NotReadableError':
+      return (
+        '摄像头正被占用或暂时不可用，请稍后重试，或使用「相册」上传。'
+      );
+    case 'OverconstrainedError':
+      return (
+        '摄像头参数与设备不匹配（已尝试了兼容配置）。请使用「相册」上传产品照片。'
+      );
+    case 'SecurityError':
+    case 'AbortError':
+      return (
+        `${name === 'AbortError' ? '打开相机被取消或被中断' : '浏览器阻止了摄像头访问'}。请在安全环境（HTTPS）下重试或使用「相册」。`
+      );
+    default:
+      return `无法打开手机相机${name ? `（${name}）` : ''}。说明：服务端不参与摄像；请重试或点「相册」上传照片。`;
+  }
+}
+
 // 相机相关
 const videoRef = ref<HTMLVideoElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -28,6 +104,12 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const stream = ref<MediaStream | null>(null);
 const isCameraReady = ref(false);
 const cameraError = ref('');
+/** 移动端首次进入：在用户点击前不自动调摄像头（避免无手势 / 误报无权限） */
+const mobileCameraConsentPending = ref(
+  typeof window !== 'undefined' &&
+    isLikelyMobileDevice() &&
+    !cameraSessionOk(),
+);
 
 // 识别结果
 const result = ref<RecognizeResult | null>(null);
@@ -42,6 +124,10 @@ const scanDebugEl = ref<HTMLElement | null>(null);
 const AGENT_DEBUG =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('debug') === '1';
+
+const cameraInsecureContext = computed(
+  () => typeof window !== 'undefined' && !window.isSecureContext,
+);
 
 type ProductCard = {
   sku: string;
@@ -170,29 +256,69 @@ function releaseCameraStream() {
   isCameraReady.value = false;
 }
 
-// 初始化相机（本机摄像头预览 + 本机拍照）
+// 初始化相机：仅调用浏览器在用户手机/本机的 getUserMedia，服务端不参与摄像。
 async function initCamera() {
   releaseCameraStream();
-  try {
-    stream.value = await navigator.mediaDevices.getUserMedia({
+  cameraError.value = '';
+
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    cameraError.value =
+      '当前浏览器未暴露摄像头接口（有时是 HTTP 等非安全访问导致）。服务端无法替您拍照，请改用 HTTPS、系统浏览器打开，或使用「相册」上传。';
+    return;
+  }
+
+  const constraintSets: MediaStreamConstraints[] = [
+    {
       video: {
-        facingMode: "environment",
+        facingMode: { ideal: 'environment' },
         width: { ideal: 1920 },
         height: { ideal: 1080 },
       },
       audio: false,
-    });
+    },
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: { width: { ideal: 1280 } }, audio: false },
+    { video: true, audio: false },
+  ];
 
-    await nextTick();
-    if (videoRef.value) {
-      videoRef.value.srcObject = stream.value;
-      isCameraReady.value = true;
-      cameraError.value = "";
+  let lastErr: unknown;
+  for (const c of constraintSets) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia(c);
+      stream.value = s;
+      await nextTick();
+      if (videoRef.value) {
+        videoRef.value.srcObject = stream.value;
+        videoRef.value.setAttribute('playsinline', 'true');
+        (videoRef.value as HTMLVideoElement & { webkitPlaysinline?: boolean }).webkitPlaysinline = true;
+        isCameraReady.value = true;
+        cameraError.value = '';
+        rememberCameraOrGallerySessionOk();
+        refreshMobileCameraConsentPending();
+        return;
+      }
+    } catch (e) {
+      lastErr = e;
+      releaseCameraStream();
     }
-  } catch (e) {
-    cameraError.value = "无法访问本机相机，请在浏览器中允许摄像头权限（需 HTTPS 或局域网访问）";
-    console.error("Camera error:", e);
   }
+
+  cameraError.value = explainCameraDenied(lastErr);
+  isCameraReady.value = false;
+  console.error('Camera error:', lastErr);
+}
+
+async function retryCameraPermission() {
+  mobileCameraConsentPending.value = false;
+  await initCamera();
+}
+
+/** 在用户点击链路内唤起相机（解决部分手机要求手势上下文） */
+async function onMobileUserEnableCamera() {
+  mobileCameraConsentPending.value = false;
+  cameraError.value = '';
+  await nextTick();
+  await initCamera();
 }
 
 // 识别：本机拍/选图 → 上传服务端 VLM；扫描阶段释放摄像头省资源
@@ -307,12 +433,14 @@ async function captureAndRecognize() {
   const blob = await new Promise<Blob>((resolve) => {
     canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.9);
   });
-  
+
+  rememberCameraOrGallerySessionOk();
   await processImageRecognition(blob, 'capture.jpg');
 }
 
-// 从相册选择图片
+// 从相册选择图片（同样在本机读取，仅上传所选文件）
 function openGallery() {
+  mobileCameraConsentPending.value = false;
   fileInputRef.value?.click();
 }
 
@@ -321,7 +449,8 @@ async function handleFileSelect(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
-  
+  rememberCameraOrGallerySessionOk();
+  refreshMobileCameraConsentPending();
   await processImageRecognition(file, file.name);
   input.value = '';
 }
@@ -799,28 +928,31 @@ function restart() {
   suggestedProducts.value = [];
   lastChatDebugTrace.value = null;
   lastRecognizeTrace.value = '';
-  pageState.value = 'camera';
   scanDebugPrint.value = '';
+  refreshMobileCameraConsentPending();
+  pageState.value = 'camera';
 }
 
-// 初始化：先拉语音能力状态，再等 DOM 后开本机相机
+// 初始化：先拉语音能力状态，再回到相机页时再开相机
 watch(
   pageState,
   async (s) => {
     if (s === 'camera') {
       await refreshVoiceStatus();
       await nextTick();
-      await initCamera();
+      if (!mobileCameraConsentPending.value) {
+        await initCamera();
+      }
     }
     if (s === 'chat') void refreshVoiceStatus();
   },
-  { flush: 'post' }
+  { flush: 'post', immediate: true },
 );
 
 onMounted(async () => {
+  refreshMobileCameraConsentPending();
   await refreshVoiceStatus();
   await nextTick();
-  await initCamera();
 
   if ('speechSynthesis' in window) {
     window.speechSynthesis.getVoices();
@@ -838,8 +970,44 @@ onUnmounted(() => {
   <div class="app">
     <!-- 相机页面 -->
     <div v-if="pageState === 'camera'" class="camera-page">
-      <video ref="videoRef" autoplay playsinline muted class="camera-feed" />
-      
+      <video
+        ref="videoRef"
+        autoplay
+        playsinline
+        muted
+        class="camera-feed"
+        :class="{ obscured: mobileCameraConsentPending && !cameraError }"
+      />
+
+      <!-- 非 HTTPS / 非 localhost：多数手机浏览器会直接拒绝摄像头，需提前说明 -->
+      <div v-if="cameraInsecureContext" class="camera-secure-banner">
+        <p>
+          当前使用 <strong>HTTP</strong
+          ><span v-if="!isLikelyMobileDevice()"> 或局域网 IP</span>
+          访问。<strong>拍照只在您的手机里完成</strong>，但若要实时打开摄像头预览，一般需要
+          <strong>HTTPS</strong>。可先点「相册」上传照片完成识别。
+        </p>
+      </div>
+
+      <!-- 移动端：必须由用户手势触发浏览器摄像授权，扫码进入后请先点按钮 -->
+      <div
+        v-if="mobileCameraConsentPending && pageState === 'camera'"
+        class="camera-consent-panel"
+      >
+        <div class="camera-consent-card">
+          <h2 class="camera-consent-title">使用您手机上的相机</h2>
+          <p class="camera-consent-body">
+            本页<strong>不会在服务器端打开摄像头</strong>——只会向您手机里的浏览器请求权限，在您本地预览、拍照；只有按下「拍照」后的<strong>一张照片</strong>会传到服务端做识别。
+          </p>
+          <button type="button" class="camera-consent-primary" @click="onMobileUserEnableCamera">
+            允许并使用本机摄像头
+          </button>
+          <button type="button" class="camera-consent-secondary" @click="openGallery">
+            不用摄像头，从相册选图
+          </button>
+        </div>
+      </div>
+
       <!-- 拍照取景框 - 简洁的角落标记 -->
       <div class="focus-frame">
         <div class="corner tl"></div>
@@ -853,7 +1021,7 @@ onUnmounted(() => {
       
       <div v-if="cameraError" class="camera-error">
         <p>{{ cameraError }}</p>
-        <button @click="initCamera">重试</button>
+        <button type="button" @click="retryCameraPermission">重新申请摄像头</button>
       </div>
       
       <div class="camera-controls">
@@ -876,7 +1044,9 @@ onUnmounted(() => {
             <span class="btn-label">相册</span>
           </button>
         </div>
-        <p class="btn-hint">拍照或从相册选择图片</p>
+        <p class="btn-hint">
+          「拍照」在您本机截取画面；服务端仅接收图片做识别（与远程打开您相机无关）。
+        </p>
       </div>
       
       <canvas ref="canvasRef" style="display: none;" />
@@ -1092,6 +1262,90 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.camera-feed.obscured {
+  opacity: 0.35;
+  filter: grayscale(0.25);
+}
+
+.camera-secure-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 12;
+  padding: 12px 14px;
+  background: rgba(180, 83, 9, 0.92);
+  color: #fffbeb;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.camera-secure-banner p {
+  margin: 0;
+}
+
+.camera-consent-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(3px);
+}
+
+.camera-consent-card {
+  max-width: 360px;
+  width: 100%;
+  padding: 22px 20px 20px;
+  border-radius: 16px;
+  background: linear-gradient(165deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+}
+
+.camera-consent-title {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #f0fdfa;
+  text-align: center;
+}
+
+.camera-consent-body {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.camera-consent-primary {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0284c7, #2563eb);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.camera-consent-secondary {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 12px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 /* 拍照取景框 - 简洁的角落标记 */
